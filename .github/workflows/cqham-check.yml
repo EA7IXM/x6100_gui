@@ -30,6 +30,7 @@ jobs:
         if [ ! -f "$f" ]; then
           echo '#pragma once' > "$f"
           echo '#define AETHER_X6100CTRL_API' >> "$f"
+          echo '#define AETHER_X6100CTRL_NO_EXPORT' >> "$f"
         fi
 
     - name: Packages
