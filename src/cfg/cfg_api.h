@@ -209,6 +209,7 @@ typedef struct {
 
     ParamInt *(*theme)(void); /* p_theme */
     ParamInt *(*meter_color)(void); /* p_meter_color */
+    ParamInt *(*meter_style)(void); /* p_meter_style */
     ParamInt *(*ft8_info)(void); /* p_ft8_info */
     ParamInt *(*swr_color)(void); /* p_swr_color */
     ParamInt *(*digi_compact)(void); /* p_digi_text_compact */

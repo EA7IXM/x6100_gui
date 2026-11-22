@@ -81,6 +81,7 @@ typedef enum {
     THEME_SIMPLE,
     THEME_BLACK,
     THEME_FLAT,
+    THEME_FLEX,     /* EA7IXM: SmartSDR-like colours */
 } themes_t;
 
 /* Meter Color */
@@ -88,6 +89,12 @@ typedef enum {
     METER_GRAY,
     METER_COLORED,
 } meter_color_t;
+
+/* Meter Style (EA7IXM) */
+typedef enum {
+    METER_STYLE_BAR,
+    METER_STYLE_NEEDLE,
+} meter_style_t;
 
 /* SWR Color */
 typedef enum {

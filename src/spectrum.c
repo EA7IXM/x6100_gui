@@ -495,7 +495,20 @@ void spectrum_data(const float *data_buf, uint16_t size, bool tx, uint32_t base_
         spectrum_pan_prev_freq = base_lo_freq;
     }
 
-    lpf_block(spectrum_smoothed, data_buf, param_i_get(cfg.ui.spectrum_beta()) * 0.01f, SPECTRUM_NFFT);
+    if (styles_theme_is_flex()) {
+        /* EA7IXM, SmartSDR feel: a signal rises quickly and falls slowly,
+         * so the trace reads smooth and calm without lagging a new signal.
+         * Rising uses half the user's smoothing, falling all of it. */
+        const float beta  = param_i_get(cfg.ui.spectrum_beta()) * 0.01f;
+        const float a_up  = 1.0f - beta * 0.5f;
+        const float a_dn  = 1.0f - beta;
+        for (unsigned int i = 0; i < SPECTRUM_NFFT; i++) {
+            float d = data_buf[i] - spectrum_smoothed[i];
+            spectrum_smoothed[i] += (d > 0.0f ? a_up : a_dn) * d;
+        }
+    } else {
+        lpf_block(spectrum_smoothed, data_buf, param_i_get(cfg.ui.spectrum_beta()) * 0.01f, SPECTRUM_NFFT);
+    }
 
     const bool  peak_enabled = __atomic_load_n(&s_peak_enabled, __ATOMIC_ACQUIRE);
     const int   peak_hold    = __atomic_load_n(&s_peak_hold, __ATOMIC_ACQUIRE);
@@ -1138,7 +1151,8 @@ static void spectrum_render_rotated(uint32_t *buf, int stride) {
         spectrum_draw_polyline(buf, stride, min, max, offset, true, s_peak_color);
     }
 
-    if (param_i_get(cfg.ui.spectrum_filled())) {
+    /* The Flex theme always draws SmartSDR's filled trace. */
+    if (param_i_get(cfg.ui.spectrum_filled()) || styles_theme_is_flex()) {
         lv_grad_t * cached_grad = lv_gradient_get(&grad_dsc, stride, 1);
         for (int i = 0; i < SPECTRUM_NFFT; i++) {
             int row = SPECTRUM_NFFT - 1 - offset - i;

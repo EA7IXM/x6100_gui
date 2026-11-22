@@ -22,6 +22,11 @@ const uint32_t wf_palette_gauss[] = {
 #include "palettes/gauss.inc"
 };
 
+/* EA7IXM: SmartSDR-style waterfall */
+const uint32_t wf_palette_flex[] = {
+#include "palettes/flex.inc"
+};
+
 /* Skin API */
 typedef struct {
     const uint32_t *wf_palette;
@@ -80,6 +85,7 @@ static uint32_t rng_state=1;
 static skin_t skin_default;
 static skin_t skin_flat;
 static skin_t skin_black;
+static skin_t skin_flex;
 
 static skin_t *skin_current;
 
@@ -91,6 +97,7 @@ static lv_coord_t   panel_bg_h = 182;
 static void setup_skin_default(skin_t *skin);
 static void setup_skin_flat(skin_t *skin);
 static void setup_skin_black(skin_t *skin);
+static void setup_skin_flex(skin_t *skin);
 
 static void set_skin(skin_t *skin);
 
@@ -319,6 +326,7 @@ void styles_init(themes_t theme) {
     setup_skin_default(&skin_default);
     setup_skin_flat(&skin_flat);
     setup_skin_black(&skin_black);
+    setup_skin_flex(&skin_flex);
 
     styles_set_theme(theme);
 
@@ -351,6 +359,9 @@ void styles_set_theme(themes_t theme) {
         case THEME_FLAT:
             skin_current = &skin_flat;
             break;
+        case THEME_FLEX:
+            skin_current = &skin_flex;
+            break;
         case THEME_SIMPLE:
         default:
             skin_current = &skin_default;
@@ -380,7 +391,21 @@ static void set_spectrum_color(lv_color_t color) {
     style.colors.spectrum.peak = lv_color_hsv_to_rgb(hsv.h, 12, 30);
 }
 
+bool styles_theme_is_flex(void) {
+    return skin_current == &skin_flex;
+}
+
 static void update_spectrum_color(skin_t *skin) {
+    if (skin == &skin_flex && !param_i_get(cfg.ui.spectrum_use_custom_color())) {
+        /* SmartSDR: flat white fill at ~22 % opacity on top, fading to the
+         * black background at the base; thin near-white trace; amber peak. */
+        style.colors.spectrum.low  = lv_color_hex(0x000000);
+        style.colors.spectrum.mid  = lv_color_hex(0x1f2328);
+        style.colors.spectrum.high = lv_color_hex(0x50555a);
+        style.colors.spectrum.line = lv_color_hex(0xf2f2f2);
+        style.colors.spectrum.peak = lv_color_hex(0x8a6a1c);
+        return;
+    }
     if (param_i_get(cfg.ui.spectrum_use_custom_color())) {
         lv_color_t col;
         col.full = param_i_get(cfg.ui.spectrum_color());
@@ -905,6 +930,16 @@ static void setup_skin_black(skin_t *skin) {
     }
 
     // skin->bg_img.dialog = PATH "images/dialog_black.bin";
+}
+
+static void setup_skin_flex(skin_t *skin) {
+    *skin = skin_black;
+
+    skin->wf_palette               = wf_palette_flex;
+    skin->spectrum_color           = lv_color_hex(0xf2f2f2);
+    skin->mark_color               = lv_color_hex(0x2c5266);   /* SmartSDR grid blue */
+    skin->wf_middle_line_color     = lv_color_hex(0xff3030);   /* red TX/VFO marker */
+    skin->wf_middle_line_min_width = 1;
 }
 
 static void set_skin(skin_t *skin) {

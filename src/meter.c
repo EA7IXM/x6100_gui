@@ -7,6 +7,7 @@
  */
 
 #include "meter.h"
+#include "meter_needle.h"
 #include "styles.h"
 #include "events.h"
 #include "spectrum.h"
@@ -40,6 +41,9 @@ static float            level_peak = LEVEL_MIN_DB;
 static int64_t          level_peak_time;
 
 static meter_mode_t     meter_mode = METER_MODE_S;
+static lv_obj_t         *needle;     /* EA7IXM analog meter, NULL if it could not be made */
+
+static void apply_visibility(void);
 
 static bar_tick_t s_items[] = {
     { .label = "S1",    .val = S1 },
@@ -59,8 +63,41 @@ static bar_tick_t level_items[] = {
     { .label = "-48",   .val = -48 }
 };
 
+static bool needle_selected(void) {
+    return needle && param_i_get(cfg.ui.meter_style()) == METER_STYLE_NEEDLE;
+}
+
+/* Which S-meter shows: the bar or the needle, both hidden in LEVEL mode. */
+static void apply_visibility(void) {
+    if (meter_mode == METER_MODE_LEVEL) {
+        lv_obj_add_flag(s_bar, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(db_val_label, LV_OBJ_FLAG_HIDDEN);
+        meter_needle_show(false);
+        return;
+    }
+    if (needle_selected()) {
+        lv_obj_add_flag(s_bar, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(db_val_label, LV_OBJ_FLAG_HIDDEN);
+        meter_needle_show(true);
+    } else {
+        meter_needle_show(false);
+        lv_obj_clear_flag(s_bar, LV_OBJ_FLAG_HIDDEN);
+        if (param_i_get(cfg.ui.show_meter_value())) {
+            lv_obj_clear_flag(db_val_label, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(db_val_label, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+static void on_meter_style_change(Subject *, void *) {
+    apply_visibility();
+}
+
 static void on_show_meter_value_change(Subject *, void *) {
-    if (param_i_get(cfg.ui.show_meter_value())) {
+    if (needle_selected() || meter_mode == METER_MODE_LEVEL) {
+        lv_obj_add_flag(db_val_label, LV_OBJ_FLAG_HIDDEN);
+    } else if (param_i_get(cfg.ui.show_meter_value())) {
         lv_obj_clear_flag(db_val_label, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_add_flag(db_val_label, LV_OBJ_FLAG_HIDDEN);
@@ -71,6 +108,7 @@ static void meter_scheduled_refresh(void *unused) {
     (void)unused;
     lv_bar_indicator_set_value(s_bar, meter_db);
     lv_bar_indicator_set_peak_value(s_bar, meter_peak);
+    meter_needle_set(meter_db, meter_peak);
 }
 
 static void update_db_label_cb(lv_timer_t *t) {
@@ -175,7 +213,10 @@ lv_obj_t * meter_init(lv_obj_t * parent) {
 
     lv_timer_create(update_db_label_cb, LV_DISP_DEF_REFR_PERIOD * 3, NULL);
 
+    needle = meter_needle_create(obj);
+
     subject_subscribe_delayed_and_notify((Subject *)cfg.ui.show_meter_value(), on_show_meter_value_change, NULL);
+    subject_subscribe_delayed_and_notify((Subject *)cfg.ui.meter_style(), on_meter_style_change, NULL);
 
     return obj;
 }
@@ -192,8 +233,7 @@ void meter_set_mode(meter_mode_t mode) {
     meter_mode = mode;
 
     if (meter_mode == METER_MODE_LEVEL) {
-        lv_obj_add_flag(s_bar, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(db_val_label, LV_OBJ_FLAG_HIDDEN);
+        apply_visibility();
         lv_obj_clear_flag(level_bar, LV_OBJ_FLAG_HIDDEN);
 
         level_peak = LEVEL_MIN_DB;
@@ -209,8 +249,7 @@ void meter_set_mode(meter_mode_t mode) {
         }
 
         lv_obj_add_flag(level_bar, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(s_bar, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(db_val_label, LV_OBJ_FLAG_HIDDEN);
+        apply_visibility();
     }
 }
 

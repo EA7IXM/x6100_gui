@@ -695,7 +695,7 @@ static void make_theme(SettingsPage &page) {
     page.label("Theme");
 
     lv_obj_t *obj =
-        page.dropdown_int(page.grid, *cfg.ui.theme(), " Simple \n Black \n Flat", nullptr, apply_theme);
+        page.dropdown_int(page.grid, *cfg.ui.theme(), " Simple \n Black \n Flat \n Flex", nullptr, apply_theme);
 
     lv_obj_set_size(obj, SMALL_6, 56);
     lv_obj_set_grid_cell(obj, LV_GRID_ALIGN_START, 1, 6, LV_GRID_ALIGN_CENTER, page.row, 1);
@@ -709,6 +709,19 @@ static void make_meter_color(SettingsPage &page) {
 
     lv_obj_t *obj =
         page.dropdown_int(page.grid, *cfg.ui.meter_color(), " Gray \n Colored", nullptr, apply_meter_color);
+
+    lv_obj_set_size(obj, SMALL_6, 56);
+    lv_obj_set_grid_cell(obj, LV_GRID_ALIGN_START, 1, 6, LV_GRID_ALIGN_CENTER, page.row, 1);
+    lv_obj_center(obj);
+
+    page.row++;
+}
+
+static void make_meter_style(SettingsPage &page) {
+    page.label("Meter Style");
+
+    lv_obj_t *obj =
+        page.dropdown_int(page.grid, *cfg.ui.meter_style(), " Bar \n Needle", nullptr, nullptr);
 
     lv_obj_set_size(obj, SMALL_6, 56);
     lv_obj_set_grid_cell(obj, LV_GRID_ALIGN_START, 1, 6, LV_GRID_ALIGN_CENTER, page.row, 1);
@@ -816,6 +829,7 @@ void make_ui_page(SettingsPage &page) {
 
     make_theme(page);
     make_meter_color(page);
+    make_meter_style(page);
     make_swr_color(page);
 
     page.finish();

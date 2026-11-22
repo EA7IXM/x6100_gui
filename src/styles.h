@@ -157,6 +157,9 @@ void styles_init(themes_t theme);
 
 void styles_set_theme(themes_t theme);
 
+/* EA7IXM: true while the Flex (SmartSDR-like) theme is active. */
+bool styles_theme_is_flex(void);
+
 void styles_update_meter_colors(meter_color_t mc);
 
 /* Resize the panel background: updates the shared panel style geometry and
