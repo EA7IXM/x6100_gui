@@ -34,8 +34,8 @@
 #define K_PEAK          0.25f
 
 /* Face colours */
-#define C_FACE_TOP      0xFFF3C8
-#define C_FACE_BOTTOM   0xE6C277
+#define C_FACE_TOP      0xFFF2D8
+#define C_FACE_BOTTOM   0xF5BE62
 #define C_FACE_BORDER   0x5A4A2A
 #define C_SCALE         0x1A1A1A
 #define C_RED           0xC8102E
@@ -276,11 +276,13 @@ lv_obj_t *meter_needle_create(lv_obj_t *parent) {
     lv_coord_t pad_l = lv_obj_get_style_pad_left(parent, LV_PART_MAIN);
     lv_coord_t pad_t = lv_obj_get_style_pad_top(parent, LV_PART_MAIN);
 
-    /* Arc: apex 30 px from the top, edges 28 px in from the sides */
-    R          = 520.0f;
+    /* Arc: apex 26 px from the top, edges 40 px in from the sides. Flat
+     * enough that its ends stay above the two corner texts (on the radio
+     * the first version's ends ran into "S" and the reading). */
+    R          = 760.0f;
     cx         = W / 2.0f;
-    cy         = 30.0f + R;
-    half_angle = asinf((W / 2.0f - 28.0f) / R);
+    cy         = 26.0f + R;
+    half_angle = asinf((W / 2.0f - 40.0f) / R);
 
     canvas_buf = malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR_ALPHA(W, H));
     if (!canvas_buf) {
