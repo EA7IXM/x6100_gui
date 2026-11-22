@@ -30,7 +30,7 @@ jobs:
 
     - name: Compile the CQHAM sources (no link)
       run: |
-        set -e
+        fail=0
         FLAGS="-std=c11 -D_GNU_SOURCE -DLV_CONF_INCLUDE_SIMPLE -Wall -Wextra -Wno-unused-parameter \
                -Werror=implicit-function-declaration -Werror=incompatible-pointer-types \
                -Werror=int-conversion -Werror=return-type \
@@ -38,5 +38,6 @@ jobs:
         for f in src/cqham/cqham_adpcm.c src/cqham/cqham_bands.c src/cqham/cqham_net.c \
                  src/cqham/cqham_client.c src/cqham/cqham_audio.c src/dialog_cqham.c src/meter_needle.c; do
           echo "== $f"
-          gcc $FLAGS -c "$f" -o /tmp/out.o
+          gcc $FLAGS -c "$f" -o /tmp/out.o || fail=1
         done
+        exit $fail

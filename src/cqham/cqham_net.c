@@ -23,6 +23,7 @@
 #include <unistd.h>
 
 #include <gnutls/gnutls.h>
+#include <gnutls/x509.h>
 
 #define CONNECT_TIMEOUT_MS  8000
 #define IO_TIMEOUT_MS       8000
