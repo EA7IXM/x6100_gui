@@ -67,6 +67,9 @@ target_sources(${PROJECT_NAME} PUBLIC
     dialog_wefax.c wefax/decoder.c wefax/stations.c wefax/wefax_pp.c
     # NavTex
     dialog_navtex.c navtex/decoder.c navtex/sitorb.c navtex/bulletin.c
+    # CQHAM (EA7IXM fork)
+    dialog_cqham.c cqham/cqham_client.c cqham/cqham_net.c cqham/cqham_audio.c
+    cqham/cqham_adpcm.c cqham/cqham_bands.c
     # SSTV
     dialog_sstv.c sstv_resources.c sstv/decoder.c sstv/encoder.c sstv/autodetect.c sstv/vis.c sstv/linesync.c sstv/preview.c sstv/sstv_denoise.c sstv/sstv_dnn.c sstv/syncgrid.c
 )
@@ -91,6 +94,7 @@ find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
 pkg_check_modules(deps REQUIRED IMPORTED_TARGET
     libnm dbus-glib-1 sqlite3 libpng libgps sndfile libudev libpulse libpulse-simple alsa bluez
+    gnutls
 )
 
 

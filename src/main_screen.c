@@ -53,6 +53,7 @@
 /* The apps on their way in: each one's include below its name */
 /* WSPR */
 #include "dialog_wspr.h"
+#include "dialog_cqham.h"
 /* JS8 */
 #include "dialog_js8.h"
 /* PSK31 */
@@ -293,6 +294,12 @@ void main_screen_start_app(press_action_t app_action) {
             voice_say_text_fmt("DSC window");
             break;
 
+        /* CQHAM */
+        case ACTION_APP_CQHAM:
+            dialog_construct(dialog_cqham, obj);
+            voice_say_text_fmt("CQHAM window");
+            break;
+
         default:
             break;
     }
@@ -378,6 +385,8 @@ void main_screen_action(press_action_t action) {
         case ACTION_APP_JTTY:
         /* DSC */
         case ACTION_APP_DSC:
+        /* CQHAM */
+        case ACTION_APP_CQHAM:
             main_screen_start_app(action);
             break;
 
@@ -770,6 +779,10 @@ static void main_screen_keypad_cb(lv_event_t *e) {
     if (kp->state == KEYPAD_PRESS)
         dialog_sstv_keyboard_dismiss();
 
+    /* CQHAM open: BAND, MODE and the front PTT key act on CQHAM */
+    if (dialog_cqham_keypad(kp))
+        return;
+
     switch (kp->key) {
         case KEYPAD_PRE:
             keypad_pre(kp);
@@ -877,6 +890,10 @@ static void main_screen_hkey_cb(lv_event_t * e) {
     /* Same for microphone keys.  FINP confirms the keyboard, so it is skipped. */
     if (hkey->state == HKEY_PRESS && hkey->key != HKEY_FINP)
         dialog_sstv_keyboard_dismiss();
+
+    /* CQHAM open: hand mic F1 (talk) and UP / DOWN */
+    if (dialog_cqham_hkey(hkey))
+        return;
     switch (hkey->key) {
         case HKEY_1:
         case HKEY_2:
@@ -1095,6 +1112,12 @@ static void freq_shift(int16_t diff, uint16_t dt) {
 
 static void main_screen_rotary_cb(lv_event_t * e) {
     rotary_data_t *data = (rotary_data_t *) lv_event_get_param(e);
+
+    /* CQHAM open: the main dial tunes CQHAM, not the radio */
+    if (dialog_cqham_rotary(data->diff, data->dt)) {
+        free(data);
+        return;
+    }
 
     freq_shift(data->diff, data->dt);
     dialog_rotary(data->diff, data->dt);

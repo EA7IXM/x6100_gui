@@ -68,6 +68,9 @@ typedef enum {
     ACTION_APP_JTTY = 118,
     /* DSC: APP menu only, not a long-press action */
     ACTION_APP_DSC = 119,
+    /* CQHAM (EA7IXM fork): APP menu only. A high number, clear of the
+     * project's own apps to come. */
+    ACTION_APP_CQHAM = 150,
 } press_action_t;
 
 typedef enum {
