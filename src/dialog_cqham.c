@@ -1570,6 +1570,21 @@ bool dialog_cqham_hkey(const event_hkey_t *hk) {
             }
             return true;
 
+        case HKEY_UNKNOWN:
+            /* a hand mic code no key table knows: the mic PTT if the BASE
+             * reports it this way (see HKEY raw in ptt.log) */
+            if (!conf.ptt_micro) return true;
+            if (hk->state == HKEY_PRESS) {
+                cqham_log("PTT del micro: codigo de tecla desconocido (pulsado)");
+                ptt_by_key = true;
+                ptt(true);
+            } else if (hk->state == HKEY_RELEASE || hk->state == HKEY_LONG_RELEASE) {
+                cqham_log("PTT del micro: codigo de tecla desconocido (soltado)");
+                ptt_by_key = false;
+                ptt(false);
+            }
+            return true;
+
         case HKEY_UP:
         case HKEY_DOWN:
             if (hk->state == HKEY_RELEASE || hk->state == HKEY_PRESS) {

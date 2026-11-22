@@ -44,7 +44,7 @@ jobs:
                -Werror=int-conversion -Werror=return-type
                -I. -Isrc -Ilvgl -I/tmp/x6100control/include"
         for f in src/cqham/cqham_adpcm.c src/cqham/cqham_bands.c src/cqham/cqham_net.c \
-                 src/cqham/cqham_client.c src/cqham/cqham_audio.c src/dialog_cqham.c src/meter_needle.c; do
+                 src/cqham/cqham_client.c src/cqham/cqham_audio.c src/dialog_cqham.c src/meter_needle.c src/hkey.c src/meter.c; do
           echo "== $f"
           gcc $FLAGS -c "$f" -o /tmp/out.o || fail=1
         done

@@ -19,6 +19,9 @@
 
 static event_hkey_t     event = { .state = HKEY_RELEASE };
 static lv_timer_t       *timer = NULL;
+/* EA7IXM: a code no key table knows (the hand mic PTT, maybe): still sent,
+ * as HKEY_UNKNOWN, so the CQHAM window can take it as its PTT. */
+static bool             raw_unknown = false;
 
 static void hkey_event() {
     event_hkey_t    *e = malloc(sizeof(event_hkey_t));
@@ -42,13 +45,16 @@ static void hkey_timer(lv_timer_t *t) {
 }
 
 void hkey_put(uint32_t key) {
+    if (key != 0) {
+        raw_unknown = false;    /* set again below for a code no table knows */
+    }
     switch (key) {
         case 0:
             switch (event.state) {
                 case HKEY_PRESS:
                     event.state = HKEY_RELEASE;
                     
-                    if (event.key != HKEY_UNKNOWN) {
+                    if (event.key != HKEY_UNKNOWN || raw_unknown) {
                         hkey_event();
                     }
                     break;
@@ -56,7 +62,7 @@ void hkey_put(uint32_t key) {
                 case HKEY_LONG:
                     event.state = HKEY_LONG_RELEASE;
 
-                    if (event.key != HKEY_UNKNOWN) {
+                    if (event.key != HKEY_UNKNOWN || raw_unknown) {
                         hkey_event();
                     }
                     break;
@@ -221,6 +227,7 @@ void hkey_put(uint32_t key) {
 
        default:
             event.key = HKEY_UNKNOWN;
+            raw_unknown = true;
             break;
     }
     
@@ -230,7 +237,7 @@ void hkey_put(uint32_t key) {
             event.state = HKEY_PRESS;
             display_tick();
             
-            if (event.key != HKEY_UNKNOWN) {
+            if (event.key != HKEY_UNKNOWN || raw_unknown) {
                 hkey_event();
 
                 if (timer) {

@@ -1058,6 +1058,25 @@ static bool radio_tick() {
             diag_noresp_logged = true;
         }
 
+        /* EA7IXM: the hand mic PTT is not a known key; log every raw key code
+         * and every change of the BASE's flag word, to find how (or whether)
+         * the BASE reports it. */
+        {
+            static uint32_t last_hkey  = 0;
+            static uint32_t last_flags = 0;
+            uint32_t        flags;
+            memcpy(&flags, &pack->flag, sizeof(flags));
+            flags &= ~1u;   /* resync */
+            if (pack->hkey != last_hkey) {
+                diag_ptt_log("HKEY raw 0x%08x", (unsigned)pack->hkey);
+                last_hkey = pack->hkey;
+            }
+            if (flags != last_flags) {
+                diag_ptt_log("FLAGS raw 0x%08x (tx=%d)", (unsigned)flags, (int)pack->flag.tx);
+                last_flags = flags;
+            }
+        }
+
         hkey_put(pack->hkey);
     } else {
         if (d > FLOW_RESTART_TIMEOUT) {

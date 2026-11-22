@@ -18,6 +18,7 @@
 
 #include "../audio.h"
 #include "../dsp.h"
+#include "../cfg/cfg_api.h"
 
 #include <math.h>
 #include <pthread.h>
@@ -114,6 +115,14 @@ static atomic_int       stat_mic_cb;
 static _Atomic float    stat_mic_sum;
 static int64_t          stat_last_ms;
 
+/* base audio mode (see apply_mode) */
+typedef enum { MODE_NONE = -1, MODE_IDLE, MODE_PLAY, MODE_REC } base_mode_t;
+
+static base_mode_t    mode_applied = MODE_NONE;
+static atomic_llong   last_rx_ms;
+static bool           mic_ptt_armed;
+#define PLAY_HOLD_MS  1500
+
 static int64_t now_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -199,6 +208,7 @@ void cqham_audio_rx(const uint8_t *frame, size_t len) {
     int watts = pw & 0x1FFF;
     if (watts == 0) watts = 100;
     atomic_fetch_add(&stat_rx_frames, 1);
+    atomic_store(&last_rx_ms, now_ms());
 
     int64_t      my_freq;
     cqham_mode_t mode;
@@ -224,6 +234,7 @@ void cqham_audio_rx(const uint8_t *frame, size_t len) {
 
 void cqham_audio_rx_pcm(const int16_t *pcm, size_t n) {
     if (!atomic_load(&running) || atomic_load(&tx_on)) return;
+    atomic_store(&last_rx_ms, now_ms());
     pthread_mutex_lock(&rx_lock);
     if (!remote_slot.used) slot_reset(&remote_slot, 0xFFFFFFFFu);
     remote_slot.gain       = 1.0f;
@@ -269,12 +280,37 @@ static void slot_read(slot_t *s, float *mix) {
     s->count -= FRAME;
 }
 
-static void apply_tx_mode(bool tx) {
-    /* voice-record: the base streams the hand mic to us; play: our audio
-     * on the speaker (and the receiver muted) */
-    audio_set_play_mode(tx ? AUDIO_PLAY_VOICE_REC : AUDIO_PLAY_ON);
-    atomic_store(&tx_mode_applied, tx);
-    cqham_log("AUDIO modo %s", tx ? "VOICE_REC (micro a CQHAM)" : "PLAY_ON (CQHAM al altavoz)");
+/* The base's audio modes:
+ *   PLAY  - our audio on the speaker, the receiver muted. The base then
+ *           ignores the hand mic PTT (seen on the radio: no BASE TX at all).
+ *   IDLE  - the base's normal mode, the hand mic PTT armed; the speaker is
+ *           muted (rxvol 0) so the receiver isn't heard.
+ *   REC   - the hand mic streamed to us while we talk.
+ * With the hand mic PTT in use, the window idles in IDLE and goes to PLAY
+ * only while voices come in (and 1.5 s after). */
+
+static void apply_mode(base_mode_t m) {
+    if (m == mode_applied) return;
+    switch (m) {
+        case MODE_IDLE:
+            audio_set_play_mode(AUDIO_PLAY_OFF);
+            x6100_control_rxvol_set(0);
+            break;
+        case MODE_PLAY:
+            audio_set_play_mode(AUDIO_PLAY_ON);
+            x6100_control_rxvol_set(param_i_get(cfg.volume()));
+            break;
+        case MODE_REC:
+            audio_set_play_mode(AUDIO_PLAY_VOICE_REC);
+            break;
+        default:
+            break;
+    }
+    mode_applied = m;
+    atomic_store(&tx_mode_applied, m == MODE_REC);
+    cqham_log("AUDIO modo %s", m == MODE_IDLE ? "NORMAL (PTT del micro armado, receptor silenciado)"
+                             : m == MODE_PLAY ? "PLAY_ON (CQHAM al altavoz)"
+                                              : "VOICE_REC (micro a CQHAM)");
 }
 
 static void *play_fn(void *arg) {
@@ -285,13 +321,14 @@ static void *play_fn(void *arg) {
     float   mix[FRAME];
     float   lvl = 0.0f;
 
-    apply_tx_mode(false);
+    mode_applied = MODE_NONE;
+    apply_mode(mic_ptt_armed ? MODE_IDLE : MODE_PLAY);
 
     while (atomic_load(&running)) {
-        bool tx = atomic_load(&tx_on);
-        if (tx != atomic_load(&tx_mode_applied)) {
-            apply_tx_mode(tx);
-        }
+        bool        tx   = atomic_load(&tx_on);
+        bool        busy = now_ms() - atomic_load(&last_rx_ms) < PLAY_HOLD_MS;
+        base_mode_t want = tx ? MODE_REC : ((busy || !mic_ptt_armed) ? MODE_PLAY : MODE_IDLE);
+        apply_mode(want);
 
         memset(mix, 0, sizeof(mix));
         if (!tx) {
@@ -438,6 +475,12 @@ void cqham_audio_start(void) {
     memset(&remote_slot, 0, sizeof(remote_slot));
     atomic_store(&tx_on, false);
     atomic_store(&tx_mode_applied, true);   /* forces the first apply */
+    atomic_store(&last_rx_ms, 0);
+    {
+        cqham_config_t c;
+        cqham_client_config(&c);
+        mic_ptt_armed = c.ptt_micro != 0;
+    }
 
     if (!player) {
         player = audio_create_player(RATE, 1);
@@ -468,6 +511,8 @@ void cqham_audio_stop(void) {
         player = NULL;
     }
     audio_set_play_mode(AUDIO_PLAY_OFF);
+    x6100_control_rxvol_set(param_i_get(cfg.volume()));   /* the speaker as it was */
+    mode_applied = MODE_NONE;
     atomic_store(&rx_level, 0.0f);
 }
 
