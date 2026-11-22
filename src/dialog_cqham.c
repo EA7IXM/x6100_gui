@@ -1129,7 +1129,25 @@ static button_data_t b_deny   = {.type = BTN_TEXT, .label = "NO\nCEDER", .press 
 static buttons_page_t page1 = {{&b_p1, &b_ptt, &b_net, &b_goto, &b_exit}};
 static buttons_page_t page2 = {{&b_p2, &b_step, &b_pwr, &b_mic, &b_login}};
 static buttons_page_t page3 = {{&b_p3, &b_room, &b_remote, &b_probe, &b_go}};
-static buttons_page_t page4 = {{&b_p4, &b_grant, &b_deny, NULL, NULL}};
+static const char *audio_label(void) {
+    static char b[24];
+    snprintf(b, sizeof(b), "AUDIO\n%s", cqham_audio_variant_name(cqham_audio_get_variant()));
+    return b;
+}
+
+/* test variants of the listening mode: which one keeps the hand mic PTT alive */
+static void btn_audio_cb(button_data_t *d) {
+    int v = (cqham_audio_get_variant() + 1) % CQHAM_AUDIO_VARIANTS;
+    cqham_audio_set_variant(v);
+    cqham_client_set_audio_variant(v);
+    char msg[96];
+    snprintf(msg, sizeof(msg), "Variante %d %s: prueba el PTT del micro", v, cqham_audio_variant_name(v));
+    show_notice(msg, false);
+    buttons_refresh(d);
+}
+
+static button_data_t b_audio  = {.type = BTN_TEXT_FN, .label_fn = audio_label, .press = btn_audio_cb};
+static buttons_page_t page4 = {{&b_p4, &b_grant, &b_deny, &b_audio, NULL}};
 
 static void btn_ptt_cb(button_data_t *d) {
     ptt_by_key = !s.ptt;

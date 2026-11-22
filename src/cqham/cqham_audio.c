@@ -20,6 +20,8 @@
 #include "../dsp.h"
 #include "../cfg/cfg_api.h"
 
+#include <aether_radio/x6100_control/low/control.h>
+
 #include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -289,15 +291,90 @@ static void slot_read(slot_t *s, float *mix) {
  * With the hand mic PTT in use, the window idles in IDLE and goes to PLAY
  * only while voices come in (and 1.5 s after). */
 
+/* Test variants of the listening mode (AUDIO button, page 4), to find the
+ * one where the BASE still keys on the hand mic PTT while it plays CQHAM:
+ *   0 AUTO     normal mode while quiet, play while voices come in
+ *   1 PLAY     play mode (as v3)
+ *   2 PLAY+MIC play mode, hand mic gain back
+ *   3 REC      voice-record mode as the listening mode
+ *   4 SIN-REC  play mode with the voice-record flag cleared
+ *   5 PTTM 1   play mode, pttmode bits (reg 21, bits 2-3) = 1
+ *   6 PTTM 2   play mode, pttmode bits = 2
+ * pttmode is put back as it was when leaving 5/6 and on close. */
+static atomic_int listen_variant;
+static uint32_t   pttmode_saved;
+static bool       pttmode_touched;
+
+const char *cqham_audio_variant_name(int v) {
+    static const char *n[CQHAM_AUDIO_VARIANTS] = {"AUTO", "PLAY", "PLAY+MIC", "REC", "SIN-REC", "PTTM 1", "PTTM 2"};
+    return (v >= 0 && v < CQHAM_AUDIO_VARIANTS) ? n[v] : "?";
+}
+
+static void pttmode_restore(void) {
+    if (!pttmode_touched) return;
+    uint32_t r = x6100_control_get(x6100_micsel_pttmode_chge_spmode_auxiqgen_sqlthr) & ~(3u << 2);
+    x6100_control_cmd(x6100_micsel_pttmode_chge_spmode_auxiqgen_sqlthr, r | (pttmode_saved << 2));
+    pttmode_touched = false;
+    cqham_log("AUDIO pttmode restaurado a %u", (unsigned)pttmode_saved);
+}
+
+static void pttmode_set(uint32_t v) {
+    uint32_t r = x6100_control_get(x6100_micsel_pttmode_chge_spmode_auxiqgen_sqlthr);
+    if (!pttmode_touched) {
+        pttmode_saved   = (r >> 2) & 3u;
+        pttmode_touched = true;
+    }
+    x6100_control_cmd(x6100_micsel_pttmode_chge_spmode_auxiqgen_sqlthr, (r & ~(3u << 2)) | ((v & 3u) << 2));
+    cqham_log("AUDIO pttmode %u (antes %u, registro 0x%08x)", (unsigned)v, (unsigned)pttmode_saved, (unsigned)r);
+}
+
+static void apply_play(int variant) {
+    if (variant != 5 && variant != 6) pttmode_restore();
+    switch (variant) {
+        case 2:
+            audio_set_play_mode(AUDIO_PLAY_ON);
+            x6100_control_hmic_set(param_i_get(cfg.hmic()));
+            break;
+        case 3:
+            audio_set_play_mode(AUDIO_PLAY_VOICE_REC);
+            break;
+        case 4:
+            audio_set_play_mode(AUDIO_PLAY_ON);
+            x6100_control_record_set(false);
+            x6100_control_hmic_set(param_i_get(cfg.hmic()));
+            break;
+        case 5:
+        case 6:
+            audio_set_play_mode(AUDIO_PLAY_ON);
+            pttmode_set(variant == 5 ? 1 : 2);
+            break;
+        default:
+            audio_set_play_mode(AUDIO_PLAY_ON);
+            break;
+    }
+}
+
+void cqham_audio_set_variant(int v) {
+    if (v < 0 || v >= CQHAM_AUDIO_VARIANTS) v = 0;
+    atomic_store(&listen_variant, v);
+    mode_applied = MODE_NONE;   /* the play thread applies it again */
+    cqham_log("VARIANTE AUDIO %d %s", v, cqham_audio_variant_name(v));
+}
+
+int cqham_audio_get_variant(void) {
+    return atomic_load(&listen_variant);
+}
+
 static void apply_mode(base_mode_t m) {
     if (m == mode_applied) return;
     switch (m) {
         case MODE_IDLE:
+            pttmode_restore();
             audio_set_play_mode(AUDIO_PLAY_OFF);
             x6100_control_rxvol_set(0);
             break;
         case MODE_PLAY:
-            audio_set_play_mode(AUDIO_PLAY_ON);
+            apply_play(atomic_load(&listen_variant));
             x6100_control_rxvol_set(param_i_get(cfg.volume()));
             break;
         case MODE_REC:
@@ -327,7 +404,9 @@ static void *play_fn(void *arg) {
     while (atomic_load(&running)) {
         bool        tx   = atomic_load(&tx_on);
         bool        busy = now_ms() - atomic_load(&last_rx_ms) < PLAY_HOLD_MS;
-        base_mode_t want = tx ? MODE_REC : ((busy || !mic_ptt_armed) ? MODE_PLAY : MODE_IDLE);
+        bool        autom = atomic_load(&listen_variant) == 0;
+        base_mode_t want  = tx ? MODE_REC
+                         : ((busy || !mic_ptt_armed || !autom) ? MODE_PLAY : MODE_IDLE);
         apply_mode(want);
 
         memset(mix, 0, sizeof(mix));
@@ -480,6 +559,10 @@ void cqham_audio_start(void) {
         cqham_config_t c;
         cqham_client_config(&c);
         mic_ptt_armed = c.ptt_micro != 0;
+        atomic_store(&listen_variant,
+                     (c.audio_variant >= 0 && c.audio_variant < CQHAM_AUDIO_VARIANTS) ? c.audio_variant : 0);
+        cqham_log("VARIANTE AUDIO %d %s", atomic_load(&listen_variant),
+                  cqham_audio_variant_name(atomic_load(&listen_variant)));
     }
 
     if (!player) {
@@ -510,6 +593,7 @@ void cqham_audio_stop(void) {
         audio_player_release(player);
         player = NULL;
     }
+    pttmode_restore();
     audio_set_play_mode(AUDIO_PLAY_OFF);
     x6100_control_rxvol_set(param_i_get(cfg.volume()));   /* the speaker as it was */
     mode_applied = MODE_NONE;

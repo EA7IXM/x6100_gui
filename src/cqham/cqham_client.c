@@ -127,6 +127,7 @@ static void config_defaults(cqham_config_t *c) {
     c->mic_gain = 50;
     c->volume   = 70;
     c->ptt_micro = 1;
+    c->audio_variant = 0;
 }
 
 static char *trim(char *s) {
@@ -168,6 +169,7 @@ void cqham_config_load(cqham_config_t *c) {
         else if (!strcmp(k, "paso"))       c->step = atoi(v);
         else if (!strcmp(k, "mic"))        c->mic_gain = atoi(v);
         else if (!strcmp(k, "volumen"))    c->volume = atoi(v);
+        else if (!strcmp(k, "variante_audio")) c->audio_variant = atoi(v);
         else if (!strcmp(k, "ptt_micro")) {
             if (!strcmp(v, "no") || !strcmp(v, "0")) c->ptt_micro = 0;
             else if (!strcmp(v, "voz") || !strcmp(v, "2")) c->ptt_micro = 2;
@@ -204,6 +206,8 @@ void cqham_config_save(const cqham_config_t *c) {
             "\n# PTT del micro de mano: cw (la radio en CW a 0,1 W: entra en TX sin portadora),\n"
             "# voz (deja el modo de la radio, 0,1 W) o no (solo tecla PTT del frontal y F1)\n"
             "ptt_micro=%s\n"
+            "# variante de audio (boton AUDIO, pag.4): 0 AUTO 1 PLAY 2 PLAY+MIC 3 REC 4 SIN-REC 5 PTTM1 6 PTTM2\n"
+            "variante_audio=%d\n"
             "\n# Lo guarda la radio sola:\n"
             "token=%s\n"
             "frecuencia=%lld\n"
@@ -214,7 +218,7 @@ void cqham_config_save(const cqham_config_t *c) {
             "mic=%d\n"
             "volumen=%d\n",
             c->callsign, c->password, c->server, c->port, c->tls, c->verify,
-            c->ptt_micro == 0 ? "no" : (c->ptt_micro == 2 ? "voz" : "cw"), c->token,
+            c->ptt_micro == 0 ? "no" : (c->ptt_micro == 2 ? "voz" : "cw"), c->audio_variant, c->token,
             (long long)c->freq, cqham_mode_name((cqham_mode_t)c->mode), c->room, c->power,
             c->step, c->mic_gain, c->volume);
     fflush(f);
@@ -1080,6 +1084,13 @@ void cqham_client_set_step(int hz) {
 void cqham_client_set_mic_gain(int g) {
     pthread_mutex_lock(&lock);
     cfg.mic_gain = g < 0 ? 0 : (g > 100 ? 100 : g);
+    pthread_mutex_unlock(&lock);
+}
+
+void cqham_client_set_audio_variant(int v) {
+    pthread_mutex_lock(&lock);
+    cfg.audio_variant = v;
+    cqham_config_save(&cfg);
     pthread_mutex_unlock(&lock);
 }
 
