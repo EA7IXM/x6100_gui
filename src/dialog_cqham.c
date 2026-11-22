@@ -111,6 +111,7 @@ static x6100_vfo_t radio_vfo;
 
 /* soft buttons refreshed by the network list (defined further down) */
 static button_data_t b_net, b_goto;
+static void ptt(bool on);
 
 static const int  steps[] = {100, 1000, 5000, 10000, 25000};
 static const int  powers[] = {5, 10, 25, 50, 100};
@@ -222,7 +223,8 @@ static void led_set(lv_obj_t *led, bool on, uint32_t color) {
 #define MTR_W 160
 #define MTR_H 130
 
-static void meter_draw_cb(lv_event_t *e) {
+/* (kept for a future option: the meter is now the radio's own) */
+__attribute__((unused)) static void meter_draw_cb(lv_event_t *e) {
     lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
     lv_area_t      c;
     lv_obj_get_coords(lv_event_get_target(e), &c);
