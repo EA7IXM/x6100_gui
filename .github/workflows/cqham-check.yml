@@ -49,3 +49,8 @@ jobs:
           gcc $FLAGS -c "$f" -o /tmp/out.o || fail=1
         done
         exit $fail
+
+    - name: ADPCM test vector (compare with CQHAM's adpcm.js)
+      run: |
+        gcc -std=c11 -D_GNU_SOURCE -Isrc/cqham src/cqham/adpcm_vector.c src/cqham/cqham_adpcm.c -lm -o /tmp/vec
+        /tmp/vec
