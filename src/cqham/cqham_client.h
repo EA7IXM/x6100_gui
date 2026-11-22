@@ -19,6 +19,7 @@
 
 #define CQHAM_CALL_LEN      16
 #define CQHAM_MAX_STATIONS  48
+#define CQHAM_MAX_NET       48
 #define CQHAM_MAX_USERS     12
 #define CQHAM_SCOPE_POINTS  2048
 
@@ -39,6 +40,19 @@ typedef struct {
     bool    tx;
     char    call[CQHAM_CALL_LEN];
 } cqham_station_t;
+
+/* One user of the whole network (the "cluster" message, every 1.5 s) */
+typedef struct {
+    char    call[CQHAM_CALL_LEN];
+    char    name[24];
+    char    band[8];
+    char    mode[6];
+    char    country[4];
+    int64_t freq;           /* Hz */
+    char    room;           /* 'a' / 'b' / 0 */
+    bool    tx;
+    bool    bot;
+} cqham_user_t;
 
 typedef struct {
     cqham_status_t  status;
@@ -73,6 +87,11 @@ typedef struct {
     /* band activity (the CQHAM scope) */
     int             stations_n;
     cqham_station_t stations[CQHAM_MAX_STATIONS];
+
+    /* network activity: everybody connected */
+    int             net_n;
+    cqham_user_t    net[CQHAM_MAX_NET];
+    uint32_t        net_seq;
 
     /* last notice for the operator */
     char            notice[128];
@@ -110,6 +129,7 @@ typedef struct {
     int     step;           /* Hz */
     int     mic_gain;       /* 50 = unity, 0..100 */
     int     volume;         /* 0..100 */
+    int     ptt_micro;      /* hand mic PTT: 0 off, 1 CW (no carrier), 2 voice */
 } cqham_config_t;
 
 /* Settings file on the DATA partition (editable on a PC). */
@@ -147,3 +167,6 @@ void cqham_client_levels(int *volume, int *mic_gain);
 /* Audio: a complete frame (14-byte header + payload) to send. */
 void cqham_client_send_audio(const uint8_t *frame, size_t len);
 uint32_t cqham_client_my_id(void);
+
+/* Diagnostic log on the DATA partition (/mnt/cqham_log.txt) */
+void cqham_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));

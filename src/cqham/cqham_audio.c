@@ -107,6 +107,13 @@ static audio_player_t  *player;
 static _Atomic float    rx_level;
 static _Atomic float    mic_level;
 
+/* diagnostics */
+static atomic_int       stat_rx_frames;
+static atomic_int       stat_tx_frames;
+static atomic_int       stat_mic_cb;
+static _Atomic float    stat_mic_sum;
+static int64_t          stat_last_ms;
+
 static int64_t now_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -191,6 +198,7 @@ void cqham_audio_rx(const uint8_t *frame, size_t len) {
 
     int watts = pw & 0x1FFF;
     if (watts == 0) watts = 100;
+    atomic_fetch_add(&stat_rx_frames, 1);
 
     int64_t      my_freq;
     cqham_mode_t mode;
@@ -266,6 +274,7 @@ static void apply_tx_mode(bool tx) {
      * on the speaker (and the receiver muted) */
     audio_set_play_mode(tx ? AUDIO_PLAY_VOICE_REC : AUDIO_PLAY_ON);
     atomic_store(&tx_mode_applied, tx);
+    cqham_log("AUDIO modo %s", tx ? "VOICE_REC (micro a CQHAM)" : "PLAY_ON (CQHAM al altavoz)");
 }
 
 static void *play_fn(void *arg) {
@@ -306,6 +315,13 @@ static void *play_fn(void *arg) {
         float rms = sqrtf(sum / FRAME) * 3.0f;
         lvl       = lvl * 0.6f + (rms > 1.0f ? 1.0f : rms) * 0.4f;
         atomic_store(&rx_level, lvl);
+
+        int64_t now = now_ms();
+        if (now - stat_last_ms >= 15000) {
+            stat_last_ms = now;
+            int rxf = atomic_exchange(&stat_rx_frames, 0);
+            if (rxf) cqham_log("AUDIO RX %d tramas en 15 s, nivel %.2f", rxf, lvl);
+        }
 
         if (player) {
             audio_player_send(player, out, FRAME);   /* blocks: paces the loop */
@@ -353,6 +369,7 @@ static void send_frame(void) {
 
 static void mic_cb(size_t n, int16_t *samples) {
     if (!atomic_load(&tx_on)) return;
+    atomic_fetch_add(&stat_mic_cb, 1);
 
     int mic;
     cqham_client_levels(NULL, &mic);
@@ -376,6 +393,8 @@ static void mic_cb(size_t n, int16_t *samples) {
             }
             float rms = sqrtf(sum / FRAME) * 3.0f;
             atomic_store(&mic_level, rms > 1.0f ? 1.0f : rms);
+            atomic_fetch_add(&stat_tx_frames, 1);
+            atomic_store(&stat_mic_sum, atomic_load(&stat_mic_sum) + (rms > 1.0f ? 1.0f : rms));
             send_frame();
             tx_n = 0;
         }
@@ -394,8 +413,15 @@ void cqham_audio_tx(bool on) {
         for (int i = 0; i < SLOTS; i++) slots[i].used = false;
         remote_slot.used = false;
         pthread_mutex_unlock(&rx_lock);
+        atomic_store(&stat_tx_frames, 0);
+        atomic_store(&stat_mic_cb, 0);
+        atomic_store(&stat_mic_sum, 0.0f);
     } else {
         atomic_store(&mic_level, 0.0f);
+        int frames = atomic_load(&stat_tx_frames);
+        cqham_log("AUDIO TX fin: %d bloques del micro, %d tramas enviadas, nivel medio %.3f",
+                  atomic_load(&stat_mic_cb), frames,
+                  frames ? atomic_load(&stat_mic_sum) / frames : 0.0f);
     }
     atomic_store(&tx_on, on);
     if (mic_sub != AUDIO_SUB_INVALID) {

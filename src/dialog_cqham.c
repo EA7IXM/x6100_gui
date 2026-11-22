@@ -25,6 +25,7 @@
 
 #include "buttons.h"
 #include "keyboard.h"
+#include "meter.h"
 #include "msg.h"
 #include "pubsub_ids.h"
 #include "radio.h"
@@ -45,8 +46,8 @@
 
 /* Geometry inside the dialog (796 x 345) */
 #define PANEL_W     176
-#define LCD_X       (PANEL_W + 8)
-#define LCD_W       (DIALOG_WIDTH - 2 * PANEL_W - 16)
+#define LCD_X       2
+#define LCD_W       (DIALOG_WIDTH - PANEL_W - 8)
 #define SC_W        (LCD_W - 8)
 #define SC_H        196
 #define SP_H        92          /* spectrum */
@@ -106,6 +107,10 @@ static int64_t    rq_freq;
 static int64_t    rq_last_ms;
 static bool       ptt_by_mic;       /* the hand mic PTT keyed the base */
 static bool       ptt_by_key;
+static x6100_vfo_t radio_vfo;
+
+/* soft buttons refreshed by the network list (defined further down) */
+static button_data_t b_net, b_goto;
 
 static const int  steps[] = {100, 1000, 5000, 10000, 25000};
 static const int  powers[] = {5, 10, 25, 50, 100};
@@ -619,18 +624,18 @@ static void update_texts(void) {
     }
 
     /* left: connection + users on the channel */
-    if (s.status == CQHAM_ST_ONLINE) snprintf(buf, sizeof(buf), "#4cd964 ON# %s  .  %d en red", s.dispcall, s.online);
+    if (s.status == CQHAM_ST_ONLINE) snprintf(buf, sizeof(buf), "#4cd964 ON# %s\n%d en la red", s.dispcall, s.online);
     else snprintf(buf, sizeof(buf), "#ff6b6b OFF#  CQHAM");
     if (strcmp(lv_label_get_text(lbl_conn), buf)) lv_label_set_text(lbl_conn, buf);
 
-    buf[0] = '\0';
-    for (int i = 0; i < s.users_n && i < 6; i++) {
+    /* my channel: count and the first calls (the full list: RED button) */
+    snprintf(buf, sizeof(buf), "#7fb6e6 EN EL CANAL:# %d\n", s.users_n);
+    for (int i = 0; i < s.users_n && i < 3; i++) {
         bool talking = s.talker[0] && !strcmp(s.users[i], s.talker);
-        char line[40];
-        snprintf(line, sizeof(line), "%s%s%s\n", talking ? "#4cd964 " : "", s.users[i], talking ? "#" : "");
-        strncat(buf, line, sizeof(buf) - strlen(buf) - 1);
+        char one[40];
+        snprintf(one, sizeof(one), "%s%s%s ", talking ? "#4cd964 " : "", s.users[i], talking ? "#" : "");
+        strncat(buf, one, sizeof(buf) - strlen(buf) - 1);
     }
-    if (!s.users_n) snprintf(buf, sizeof(buf), "(nadie en el canal)");
     if (strcmp(lv_label_get_text(lbl_users), buf)) lv_label_set_text(lbl_users, buf);
 
     /* right panel values */
@@ -655,19 +660,191 @@ static void update_texts(void) {
     }
 }
 
+/***** Network activity (everybody connected, as the desktop's list) *****/
+
+#define NET_ROWS    9
+#define NET_ROW_H   18
+
+static lv_obj_t *net_box, *net_title, *net_sel_bar, *net_more;
+static lv_obj_t *net_col[5];
+static bool      net_open;
+static int       net_sel, net_top;
+static int       net_order[CQHAM_MAX_NET], net_cnt;
+static uint32_t  net_seen_seq;
+static int       net_seen_sel = -1, net_seen_top = -1;
+
+static void net_sort(void) {
+    const cqham_band_t *b = band();
+    net_cnt = 0;
+    /* transmitting first, then my band, then the rest */
+    for (int pass = 0; pass < 3; pass++) {
+        for (int i = 0; i < s.net_n; i++) {
+            const cqham_user_t *u = &s.net[i];
+            bool mine = b && !strcmp(u->band, b->name);
+            int  p    = u->tx ? 0 : (mine ? 1 : 2);
+            if (p == pass) net_order[net_cnt++] = i;
+        }
+    }
+    if (net_sel >= net_cnt) net_sel = net_cnt ? net_cnt - 1 : 0;
+    if (net_sel < net_top) net_top = net_sel;
+    if (net_sel >= net_top + NET_ROWS) net_top = net_sel - NET_ROWS + 1;
+    if (net_top < 0) net_top = 0;
+}
+
+static void net_render(void) {
+    if (!net_open) return;
+    if (s.net_seq == net_seen_seq && net_sel == net_seen_sel && net_top == net_seen_top) return;
+    net_seen_seq = s.net_seq;
+    net_seen_sel = net_sel;
+    net_seen_top = net_top;
+
+    net_sort();
+
+    char cols[5][CQHAM_MAX_NET * 40];
+    for (int c = 0; c < 5; c++) cols[c][0] = '\0';
+
+    for (int r = 0; r < NET_ROWS && net_top + r < net_cnt; r++) {
+        const cqham_user_t *u = &s.net[net_order[net_top + r]];
+        char f[24], line[64];
+        long long khz = u->freq / 1000, hz = (u->freq % 1000) / 100;
+        snprintf(f, sizeof(f), "%lld.%lld", khz, hz);
+
+        snprintf(line, sizeof(line), "%s\n", u->tx ? "#ff3b30 TX#" : (u->bot ? "#7fe0a0 BOT#" : ""));
+        strcat(cols[0], line);
+        snprintf(line, sizeof(line), "%s%s%s\n", u->tx ? "#ff6b6b " : "", u->call, u->tx ? "#" : "");
+        strcat(cols[1], line);
+        snprintf(line, sizeof(line), "%s%s\n", u->band, u->room ? (u->room == 'b' ? " B" : " A") : "");
+        strcat(cols[2], line);
+        snprintf(line, sizeof(line), "%s  %s\n", f, u->mode);
+        strcat(cols[3], line);
+        snprintf(line, sizeof(line), "%s %.12s\n", u->country, u->name);
+        strcat(cols[4], line);
+    }
+    for (int c = 0; c < 5; c++) lv_label_set_text(net_col[c], cols[c]);
+
+    char title[64];
+    snprintf(title, sizeof(title), "ACTIVIDAD EN LA RED  (%d)", s.net_n);
+    lv_label_set_text(net_title, title);
+
+    if (net_cnt > 0) {
+        lv_obj_clear_flag(net_sel_bar, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_y(net_sel_bar, 22 + (net_sel - net_top) * NET_ROW_H);
+    } else {
+        lv_obj_add_flag(net_sel_bar, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(net_col[1], s.status == CQHAM_ST_ONLINE ? "(cargando...)" : "(sin conexion)");
+    }
+    int more = net_cnt - (net_top + NET_ROWS);
+    if (more > 0) {
+        char m[24];
+        snprintf(m, sizeof(m), "+%d mas (dial)", more);
+        lv_label_set_text(net_more, m);
+    } else {
+        lv_label_set_text(net_more, "");
+    }
+    buttons_refresh(&b_goto);
+    buttons_refresh(&b_net);
+}
+
+static void net_show(bool on) {
+    net_open = on;
+    if (on) {
+        lv_obj_clear_flag(net_box, LV_OBJ_FLAG_HIDDEN);
+        net_seen_seq = 0;
+        net_seen_sel = -1;
+        net_sel      = 0;
+        net_top      = 0;
+        net_render();
+    } else {
+        lv_obj_add_flag(net_box, LV_OBJ_FLAG_HIDDEN);
+    }
+    buttons_refresh(&b_net);
+    buttons_refresh(&b_goto);
+}
+
+static void net_move(int dir) {
+    if (!net_cnt) return;
+    net_sel += dir;
+    if (net_sel < 0) net_sel = 0;
+    if (net_sel >= net_cnt) net_sel = net_cnt - 1;
+    if (net_sel < net_top) net_top = net_sel;
+    if (net_sel >= net_top + NET_ROWS) net_top = net_sel - NET_ROWS + 1;
+    net_render();
+}
+
+static void net_create(lv_obj_t *lcd, lv_coord_t x, lv_coord_t y) {
+    net_box = lv_obj_create(lcd);
+    lv_obj_remove_style_all(net_box);
+    lv_obj_set_pos(net_box, x, y);
+    lv_obj_set_size(net_box, SC_W, SC_H);
+    lv_obj_set_style_bg_opa(net_box, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(net_box, lv_color_hex(0x06101a), 0);
+    lv_obj_set_style_border_width(net_box, 1, 0);
+    lv_obj_set_style_border_color(net_box, lv_color_hex(0x2b4357), 0);
+    lv_obj_clear_flag(net_box, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
+    net_sel_bar = lv_obj_create(net_box);
+    lv_obj_remove_style_all(net_sel_bar);
+    lv_obj_set_pos(net_sel_bar, 2, 22);
+    lv_obj_set_size(net_sel_bar, SC_W - 4, NET_ROW_H);
+    lv_obj_set_style_bg_opa(net_sel_bar, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(net_sel_bar, lv_color_hex(0x1d3550), 0);
+
+    net_title = mk_label(net_box, &sony_16, 0x5fb4ff, 6, 2, SC_W - 12, LV_TEXT_ALIGN_LEFT, "ACTIVIDAD EN LA RED");
+    net_more  = mk_label(net_box, &sony_14, 0x7d9ab3, SC_W - 130, 4, 124, LV_TEXT_ALIGN_RIGHT, "");
+
+    static const lv_coord_t cx[5] = {4, 40, 140, 196, 316};
+    static const lv_coord_t cw[5] = {36, 100, 56, 120, 96};
+    for (int c = 0; c < 5; c++) {
+        net_col[c] = mk_label(net_box, &sony_16, c == 1 ? 0xeafaff : 0xa8c4da, cx[c], 22, cw[c],
+                              LV_TEXT_ALIGN_LEFT, "");
+        lv_label_set_recolor(net_col[c], true);
+        lv_obj_set_style_text_line_space(net_col[c], NET_ROW_H - 16, 0);
+        lv_obj_set_height(net_col[c], NET_ROWS * NET_ROW_H);
+    }
+    lv_obj_add_flag(net_box, LV_OBJ_FLAG_HIDDEN);
+    net_open = false;
+}
+
+/* The hand mic PTT is wired to the base, which keys the radio by itself.
+ * In CW at 0.1 W the base goes to TX with no carrier: that TX is the
+ * operator's CQHAM PTT. Watched here as well as through MSG_RADIO_TX. */
+static void base_ptt_poll(void) {
+    if (!conf.ptt_micro) return;
+    bool base_tx = radio_get_state() == RADIO_TX;
+    if (base_tx && !ptt_by_mic && !ptt_by_key && !s.ptt) {
+        ptt_by_mic = true;
+        cqham_log("PTT del micro: la base entro en TX");
+        ptt(true);
+    } else if (!base_tx && ptt_by_mic) {
+        ptt_by_mic = false;
+        cqham_log("PTT del micro: la base volvio a RX");
+        ptt(false);
+    }
+}
+
 static void timer_cb(lv_timer_t *t) {
     (void)t;
     cqham_client_get(&s);
     cqham_client_config(&conf);
     tick_n++;
 
+    base_ptt_poll();
+
     float prev = s_meter;
     update_smeter();
-    if (fabsf(prev - s_meter) > 0.002f) lv_obj_invalidate(meter_obj);
+    (void)prev;
+    {
+        /* CQHAM's 0..1 scale (marks S1 S3 S5 S7 S9 +20 +40 +60 at k/7) to dBm
+         * for the radio's own meter */
+        float k  = s_meter * 7.0f;
+        float db = k <= 4.0f ? S1 + k * 12.0f : S9 + (k - 4.0f) * 20.0f;
+        meter_external_set(db);
+    }
 
     update_texts();
     axis_update();
     scope_render();
+    net_render();
 }
 
 /***** Actions *****/
@@ -711,6 +888,11 @@ static void mode_key(keypad_key_t key) {
 static void dial(int32_t diff) {
     const cqham_band_t *b = band();
     if (!b || diff == 0) return;
+
+    if (net_open) {             /* the network list is open: the dial scrolls it */
+        net_move(diff > 0 ? 1 : -1);
+        return;
+    }
 
     knob_angle += diff * 0.12f;
     lv_obj_invalidate(knob_obj);
@@ -839,12 +1021,22 @@ static void btn_deny_cb(button_data_t *d);
 static void btn_probe_cb(button_data_t *d);
 static void btn_go_remote_cb(button_data_t *d);
 
-static button_data_t b_p1     = {.type = BTN_TEXT, .label = "(CQHAM 1:3)", .press = button_next_page_cb,
-                                 .hold = button_prev_page_cb, .next = &page2, .prev = &page3};
-static button_data_t b_p2     = {.type = BTN_TEXT, .label = "(CQHAM 2:3)", .press = button_next_page_cb,
+static void btn_net_cb(button_data_t *d);
+static void btn_goto_cb(button_data_t *d);
+static const char *net_label(void);
+static const char *goto_label(void);
+
+static buttons_page_t page4;
+static button_data_t b_p1     = {.type = BTN_TEXT, .label = "(CQHAM 1:4)", .press = button_next_page_cb,
+                                 .hold = button_prev_page_cb, .next = &page2, .prev = &page4};
+static button_data_t b_p2     = {.type = BTN_TEXT, .label = "(CQHAM 2:4)", .press = button_next_page_cb,
                                  .hold = button_prev_page_cb, .next = &page3, .prev = &page1};
-static button_data_t b_p3     = {.type = BTN_TEXT, .label = "(CQHAM 3:3)", .press = button_next_page_cb,
-                                 .hold = button_prev_page_cb, .next = &page1, .prev = &page2};
+static button_data_t b_p3     = {.type = BTN_TEXT, .label = "(CQHAM 3:4)", .press = button_next_page_cb,
+                                 .hold = button_prev_page_cb, .next = &page4, .prev = &page2};
+static button_data_t b_p4     = {.type = BTN_TEXT, .label = "(CQHAM 4:4)", .press = button_next_page_cb,
+                                 .hold = button_prev_page_cb, .next = &page1, .prev = &page3};
+static button_data_t b_net    = {.type = BTN_TEXT_FN, .label_fn = net_label, .press = btn_net_cb};
+static button_data_t b_goto   = {.type = BTN_TEXT_FN, .label_fn = goto_label, .press = btn_goto_cb};
 static button_data_t b_ptt    = {.type = BTN_TEXT_FN, .label_fn = ptt_label, .press = btn_ptt_cb};
 static button_data_t b_step   = {.type = BTN_TEXT_FN, .label_fn = step_label, .press = btn_step_cb};
 static button_data_t b_pwr    = {.type = BTN_TEXT_FN, .label_fn = pwr_label, .press = btn_pwr_cb};
@@ -858,9 +1050,10 @@ static button_data_t b_go     = {.type = BTN_TEXT, .label = "IR AL\nREMOTO", .pr
 static button_data_t b_grant  = {.type = BTN_TEXT, .label = "CEDER\nCONTROL", .press = btn_grant_cb};
 static button_data_t b_deny   = {.type = BTN_TEXT, .label = "NO\nCEDER", .press = btn_deny_cb};
 
-static buttons_page_t page1 = {{&b_p1, &b_ptt, &b_step, &b_pwr, &b_exit}};
-static buttons_page_t page2 = {{&b_p2, &b_login, &b_mic, &b_room, &b_remote}};
-static buttons_page_t page3 = {{&b_p3, &b_probe, &b_go, &b_grant, &b_deny}};
+static buttons_page_t page1 = {{&b_p1, &b_ptt, &b_net, &b_goto, &b_exit}};
+static buttons_page_t page2 = {{&b_p2, &b_step, &b_pwr, &b_mic, &b_login}};
+static buttons_page_t page3 = {{&b_p3, &b_room, &b_remote, &b_probe, &b_go}};
+static buttons_page_t page4 = {{&b_p4, &b_grant, &b_deny, NULL, NULL}};
 
 static void btn_ptt_cb(button_data_t *d) {
     ptt_by_key = !s.ptt;
@@ -955,9 +1148,10 @@ static void btn_deny_cb(button_data_t *d) {
 static void radio_tx_cb(void *sub, lv_msg_t *m) {
     (void)sub;
     (void)m;
-    /* The hand mic PTT is wired to the base: it keys the radio (at 0 W, the
-     * power is down while this window is open). Use it as CQHAM's PTT. */
-    if (!s.ptt) {
+    /* The hand mic PTT is wired to the base: it keys the radio (CW, 0.1 W
+     * while this window is open). Use it as CQHAM's PTT. */
+    cqham_log("MSG_RADIO_TX (la base entro en TX)");
+    if (conf.ptt_micro && !s.ptt && !ptt_by_key && !ptt_by_mic) {
         ptt_by_mic = true;
         ptt(true);
     }
@@ -966,10 +1160,62 @@ static void radio_tx_cb(void *sub, lv_msg_t *m) {
 static void radio_rx_cb(void *sub, lv_msg_t *m) {
     (void)sub;
     (void)m;
+    cqham_log("MSG_RADIO_RX (la base volvio a RX)");
     if (ptt_by_mic) {
         ptt_by_mic = false;
         ptt(false);
     }
+}
+
+/***** Network list buttons *****/
+
+static const char *net_label(void) {
+    static char b[24];
+    if (net_open) snprintf(b, sizeof(b), "CERRAR\nRED");
+    else snprintf(b, sizeof(b), "RED\n(%d)", s.net_n);
+    return b;
+}
+
+static const char *goto_label(void) {
+    static char b[32];
+    if (net_open && net_cnt > 0 && net_sel < net_cnt) {
+        snprintf(b, sizeof(b), "IR A\n%s", s.net[net_order[net_sel]].call);
+    } else {
+        snprintf(b, sizeof(b), "IR A\n--");
+    }
+    return b;
+}
+
+static void btn_net_cb(button_data_t *d) {
+    (void)d;
+    net_show(!net_open);
+}
+
+static void btn_goto_cb(button_data_t *d) {
+    (void)d;
+    if (!net_open || net_cnt == 0 || net_sel >= net_cnt) {
+        show_notice("Abre RED y elige una estacion con el dial", false);
+        return;
+    }
+    const cqham_user_t *u = &s.net[net_order[net_sel]];
+    if (cqham_band_index_for(u->freq) < 0) {
+        show_notice("Esa estacion esta fuera de las bandas", true);
+        return;
+    }
+    if (s.remote) {
+        s.remote = false;
+        cqham_client_remote(false);
+    }
+    if (u->room == 'a' || u->room == 'b') {
+        s.room = u->room;
+        cqham_client_set_room(u->room);
+    }
+    cqham_mode_t m = u->mode[0] ? cqham_mode_from_name(u->mode) : s.mode;
+    tune_to(u->freq, m);
+    char msg[64];
+    snprintf(msg, sizeof(msg), "En la frecuencia de %s", u->call);
+    show_notice(msg, false);
+    net_show(false);
 }
 
 /***** Construct / destruct *****/
@@ -988,24 +1234,10 @@ static void construct_cb(lv_obj_t *parent) {
     lv_group_add_obj(keyboard_group, o);
     lv_obj_add_event_cb(o, key_cb, LV_EVENT_KEY, NULL);
 
-    /* Left panel: signal level */
-    lv_obj_t *lp = mk_panel(o, 2, PANEL_W);
-    mk_label(lp, &sony_14, C_TITLE, 0, 4, PANEL_W, LV_TEXT_ALIGN_CENTER, "SIGNAL LEVEL CQHAM");
-    meter_obj = lv_obj_create(lp);
-    lv_obj_remove_style_all(meter_obj);
-    lv_obj_set_pos(meter_obj, (PANEL_W - MTR_W) / 2, 24);
-    lv_obj_set_size(meter_obj, MTR_W, MTR_H);
-    lv_obj_add_event_cb(meter_obj, meter_draw_cb, LV_EVENT_DRAW_MAIN, NULL);
-    led_tx = mk_led(lp, 14, 164, "TX");
-    led_rx = mk_led(lp, 66, 164, "RX");
-    led_sq = mk_led(lp, 118, 164, "ON");
-    lbl_conn = mk_label(lp, &sony_16, 0xdfe6ee, 8, 188, PANEL_W - 12, LV_TEXT_ALIGN_LEFT, "");
-    lv_label_set_recolor(lbl_conn, true);
-    mk_label(lp, &sony_14, C_TITLE, 8, 210, PANEL_W - 12, LV_TEXT_ALIGN_LEFT, "EN EL CANAL");
-    lbl_users = mk_label(lp, &sony_16, 0xcdd6dd, 8, 228, PANEL_W - 12, LV_TEXT_ALIGN_LEFT, "");
-    lv_label_set_recolor(lbl_users, true);
-    lv_label_set_long_mode(lbl_users, LV_LABEL_LONG_CLIP);
-    lv_obj_set_height(lbl_users, 108);
+    /* No meter panel: the radio's own S-meter (top of the screen) shows
+     * CQHAM's signal while this window is open, and the LCD gets wider. */
+    meter_obj = NULL;
+    meter_external(true);
 
     /* Centre: the blue LCD */
     lv_obj_t *lcd = lv_obj_create(o);
@@ -1029,6 +1261,17 @@ static void construct_cb(lv_obj_t *parent) {
     lv_obj_set_style_text_letter_space(lbl_freq, 1, 0);
     lbl_status = mk_label(lcd, &sony_18, 0x9fc7e8, 0, 76, LCD_W, LV_TEXT_ALIGN_CENTER, "");
     lbl_notice = mk_label(lcd, &sony_16, 0xffcf3f, 0, 98, LCD_W, LV_TEXT_ALIGN_CENTER, "");
+
+    /* LCD corners: connection + LEDs on the left, who is on my channel on the right */
+    lbl_conn = mk_label(lcd, &sony_16, 0xdfe6ee, 8, 28, 150, LV_TEXT_ALIGN_LEFT, "");
+    lv_label_set_recolor(lbl_conn, true);
+    led_tx = mk_led(lcd, 10, 56, "TX");
+    led_rx = mk_led(lcd, 58, 56, "RX");
+    led_sq = mk_led(lcd, 106, 56, "ON");
+    lbl_users = mk_label(lcd, &sony_16, 0xcdd6dd, LCD_W - 158, 28, 150, LV_TEXT_ALIGN_RIGHT, "");
+    lv_label_set_recolor(lbl_users, true);
+    lv_label_set_long_mode(lbl_users, LV_LABEL_LONG_CLIP);
+    lv_obj_set_height(lbl_users, 44);
 
     canvas_buf = lv_mem_alloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR(SC_W, SC_H));
     canvas     = lv_canvas_create(lcd);
@@ -1066,20 +1309,31 @@ static void construct_cb(lv_obj_t *parent) {
     lv_obj_set_style_bg_color(mic_bar, lv_color_hex(0x0a0f14), LV_PART_MAIN);
     lv_obj_set_style_bg_color(mic_bar, lv_color_hex(0x2f8ae0), LV_PART_INDICATOR);
     lbl_mic  = mk_label(rp, &sony_14, C_TITLE, 0, 290, PANEL_W, LV_TEXT_ALIGN_CENTER, "MIC");
-    lbl_hint = mk_label(rp, &sony_14, 0x7d9ab3, 4, 306, PANEL_W - 8, LV_TEXT_ALIGN_CENTER, "PTT: tecla PTT o F1 micro");
+    lbl_hint = mk_label(rp, &sony_14, 0x7d9ab3, 4, 306, PANEL_W - 8, LV_TEXT_ALIGN_CENTER, "PTT: micro, tecla PTT o F1");
 
     /* the radio's own spectrum and waterfall are drawn straight to the
      * screen: off while this window covers them */
     waterfall_set_enabled(false);
     spectrum_set_enabled(false);
 
-    /* never on RF: radio TX power to 0 while CQHAM is open */
-    x6100_control_txpwr_set(0.0f);
+    /* The hand mic PTT is wired to the base, which keys by itself. The
+     * radio goes to CW at 0.1 W (its minimum): the PTT then keys the base
+     * with no carrier, and that TX is taken as CQHAM's PTT. 0 W (out of the
+     * radio's range) kept the base from keying at all: no mic PTT. */
+    cqham_client_config(&conf);
+    radio_vfo = (x6100_vfo_t)param_i_get(cfg.band.current_vfo());
+    if (conf.ptt_micro == 1) {
+        x6100_control_vfo_mode_set(radio_vfo, x6100_mode_cw);
+    }
+    x6100_control_txpwr_set(conf.ptt_micro ? 0.1f : 0.0f);
+    cqham_log("VENTANA abierta: ptt_micro=%d (radio %s, %.1f W)", conf.ptt_micro,
+              conf.ptt_micro == 1 ? "en CW" : "en su modo", conf.ptt_micro ? 0.1 : 0.0);
 
     tx_sub = lv_msg_subscribe(MSG_RADIO_TX, radio_tx_cb, NULL);
     rx_sub = lv_msg_subscribe(MSG_RADIO_RX, radio_rx_cb, NULL);
 
-    cqham_client_config(&conf);
+    net_create(lcd, 2, DIALOG_HEIGHT - 4 - SC_H - 6);
+
     cqham_client_start();
     cqham_audio_start();
     cqham_client_get(&s);
@@ -1124,7 +1378,13 @@ static void destruct_cb(void) {
     cqham_audio_stop();
 
     /* the radio as it was */
+    if (conf.ptt_micro == 1) {
+        x6100_control_vfo_mode_set(radio_vfo, (x6100_mode_t)cparam_i_get(cfg.cur.mode()));
+    }
     x6100_control_txpwr_set(param_f_get(cfg.pwr()));
+    meter_external(false);
+    net_open = false;
+    cqham_log("VENTANA cerrada");
     waterfall_set_enabled(true);
     spectrum_set_enabled(true);
 

@@ -56,6 +56,38 @@ static int64_t now_ms(void) {
     return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
+/***** Diagnostic log (DATA partition, readable on a PC) *****/
+
+#define LOG_PATH    "/mnt/cqham_log.txt"
+#define LOG_MAX     (256 * 1024)
+
+static pthread_mutex_t log_lock = PTHREAD_MUTEX_INITIALIZER;
+
+void cqham_log(const char *fmt, ...) {
+    pthread_mutex_lock(&log_lock);
+    FILE *f = fopen(LOG_PATH, "a");
+    if (f) {
+        if (ftell(f) > LOG_MAX) {           /* too big: start again */
+            fclose(f);
+            f = fopen(LOG_PATH, "w");
+        }
+    }
+    if (f) {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        struct tm tm;
+        localtime_r(&ts.tv_sec, &tm);
+        fprintf(f, "%02d:%02d:%02d.%03ld ", tm.tm_hour, tm.tm_min, tm.tm_sec, ts.tv_nsec / 1000000);
+        va_list ap;
+        va_start(ap, fmt);
+        vfprintf(f, fmt, ap);
+        va_end(ap);
+        fputc('\n', f);
+        fclose(f);
+    }
+    pthread_mutex_unlock(&log_lock);
+}
+
 /* With lock held */
 static void notice_l(bool alert, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 static void notice_l(bool alert, const char *fmt, ...) {
@@ -65,9 +97,13 @@ static void notice_l(bool alert, const char *fmt, ...) {
     va_end(ap);
     st.notice_alert = alert;
     st.notice_seq++;
+    cqham_log("AVISO %s", st.notice);
 }
 
 static void status_l(cqham_status_t s, const char *text) {
+    if (s != st.status || strcmp(st.status_text, text ? text : "")) {
+        cqham_log("ESTADO %d %s", (int)s, text ? text : "");
+    }
     st.status = s;
     snprintf(st.status_text, sizeof(st.status_text), "%s", text ? text : "");
 }
@@ -87,6 +123,7 @@ static void config_defaults(cqham_config_t *c) {
     c->step     = 1000;
     c->mic_gain = 50;
     c->volume   = 70;
+    c->ptt_micro = 1;
 }
 
 static char *trim(char *s) {
@@ -128,6 +165,11 @@ void cqham_config_load(cqham_config_t *c) {
         else if (!strcmp(k, "paso"))       c->step = atoi(v);
         else if (!strcmp(k, "mic"))        c->mic_gain = atoi(v);
         else if (!strcmp(k, "volumen"))    c->volume = atoi(v);
+        else if (!strcmp(k, "ptt_micro")) {
+            if (!strcmp(v, "no") || !strcmp(v, "0")) c->ptt_micro = 0;
+            else if (!strcmp(v, "voz") || !strcmp(v, "2")) c->ptt_micro = 2;
+            else c->ptt_micro = 1;
+        }
     }
     fclose(f);
 
@@ -136,6 +178,8 @@ void cqham_config_load(cqham_config_t *c) {
     if (c->step < 10) c->step = 1000;
     if (c->mic_gain < 0 || c->mic_gain > 100) c->mic_gain = 50;
     if (c->volume < 0 || c->volume > 100) c->volume = 70;
+    cqham_log("CONFIG indicativo=%s servidor=%s:%d tls=%d ptt_micro=%d token=%s", c->callsign, c->server, c->port,
+              c->tls, c->ptt_micro, c->token[0] ? "si" : "no");
     if (cqham_band_index_for(c->freq) < 0) c->freq = 27555000;
 }
 
@@ -154,6 +198,9 @@ void cqham_config_save(const cqham_config_t *c) {
             "puerto=%d\n"
             "tls=%d\n"
             "verificar=%d\n"
+            "\n# PTT del micro de mano: cw (la radio en CW a 0,1 W: entra en TX sin portadora),\n"
+            "# voz (deja el modo de la radio, 0,1 W) o no (solo tecla PTT del frontal y F1)\n"
+            "ptt_micro=%s\n"
             "\n# Lo guarda la radio sola:\n"
             "token=%s\n"
             "frecuencia=%lld\n"
@@ -163,7 +210,8 @@ void cqham_config_save(const cqham_config_t *c) {
             "paso=%d\n"
             "mic=%d\n"
             "volumen=%d\n",
-            c->callsign, c->password, c->server, c->port, c->tls, c->verify, c->token,
+            c->callsign, c->password, c->server, c->port, c->tls, c->verify,
+            c->ptt_micro == 0 ? "no" : (c->ptt_micro == 2 ? "voz" : "cw"), c->token,
             (long long)c->freq, cqham_mode_name((cqham_mode_t)c->mode), c->room, c->power,
             c->step, c->mic_gain, c->volume);
     fflush(f);
@@ -251,6 +299,7 @@ static void send_tune(void) {
     char rs[2] = {(b && b->rooms) ? room : '\0', '\0'};
     cJSON_AddStringToObject(o, "room", rs);
     send_json(o);
+    cqham_log("TUNE %.6f %s sala=%s", (double)f / 1e6, cqham_mode_name(m), rs);
 
     /* the scope subscription follows the channel: renew it after each tune */
     if (sub) {
@@ -447,6 +496,29 @@ static void handle_text(const char *txt) {
             s->tx    = jtrue(it, "tx");
             copy_call(s->call, jstr(it, "call"));
         }
+    } else if (!strcmp(t, "cluster")) {
+        /* network activity: everybody connected, every 1.5 s */
+        cJSON *a  = cJSON_GetObjectItemCaseSensitive(m, "users");
+        st.net_n  = 0;
+        cJSON *it;
+        cJSON_ArrayForEach(it, a) {
+            if (st.net_n >= CQHAM_MAX_NET) break;
+            if (jtrue(it, "hidden")) continue;
+            cqham_user_t *u = &st.net[st.net_n++];
+            memset(u, 0, sizeof(*u));
+            copy_call(u->call, jstr(it, "call"));
+            snprintf(u->name, sizeof(u->name), "%s", jstr(it, "name") ? jstr(it, "name") : "");
+            snprintf(u->band, sizeof(u->band), "%s", jstr(it, "band") ? jstr(it, "band") : "");
+            snprintf(u->mode, sizeof(u->mode), "%s", jstr(it, "mode") ? jstr(it, "mode") : "");
+            snprintf(u->country, sizeof(u->country), "%s", jstr(it, "country") ? jstr(it, "country") : "");
+            u->freq = (int64_t)llround(jnum(it, "freq", 0) * 1e6);
+            const char *room = jstr(it, "room");
+            u->room = room && room[0] ? room[0] : 0;
+            u->tx   = jtrue(it, "tx");
+            cJSON *bot = cJSON_GetObjectItemCaseSensitive(it, "bot");
+            u->bot  = bot && !cJSON_IsFalse(bot) && !cJSON_IsNull(bot);
+        }
+        st.net_seq++;
     } else if (!strcmp(t, "txdenied")) {
         const char *r  = jstr(m, "reason");
         const char *by = jstr(m, "by");
@@ -895,6 +967,7 @@ void cqham_client_ptt(bool on) {
     st.ptt = on;
     if (!on) st.tx_on = false;
     pthread_mutex_unlock(&lock);
+    cqham_log("PTT %s", on ? "ON" : "OFF");
 
     cJSON *o = cJSON_CreateObject();
     cJSON_AddStringToObject(o, "t", "ptt");

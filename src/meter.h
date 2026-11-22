@@ -33,3 +33,8 @@ lv_obj_t * meter_init(lv_obj_t * parent);
 void meter_update(float db, float beta);
 void meter_set_noise(float val);
 void meter_set_mode(meter_mode_t mode);
+
+/* EA7IXM: while on, the meter shows the levels given to meter_external_set()
+ * (main thread) instead of the receiver's. */
+void meter_external(bool on);
+void meter_external_set(float db);

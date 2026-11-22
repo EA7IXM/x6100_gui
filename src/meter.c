@@ -253,7 +253,38 @@ void meter_set_mode(meter_mode_t mode) {
     }
 }
 
+/* EA7IXM: another source drives the meter (CQHAM's signal while its
+ * window is open); the receiver's level is ignored meanwhile. */
+static volatile bool meter_ext;
+
+void meter_external(bool on) {
+    meter_ext  = on;
+    meter_db   = S1;
+    meter_peak = S1;
+    meter_scheduled_refresh(NULL);
+}
+
+void meter_external_set(float db) {
+    if (!meter_ext) return;
+    meter_db     = db;
+    meter_db_raw = db;
+    now          = get_time();
+    if (meter_db > meter_peak) {
+        meter_peak      = meter_db;
+        meter_peak_time = now;
+    } else if (now - meter_peak_time > METER_PEAK_HOLD) {
+        meter_peak -= (now - meter_peak_time - METER_PEAK_HOLD) * METER_PEAK_SPEED / 1000;
+        if (meter_peak < meter_db) meter_peak = meter_db;
+    }
+    if (meter_mode == METER_MODE_S) {
+        meter_scheduled_refresh(NULL);
+    }
+}
+
 void meter_update(float db, float beta) {
+    if (meter_ext) {
+        return;
+    }
     meter_db = meter_db * beta + db * (1.0f - beta);
 
     meter_db_raw = db;
