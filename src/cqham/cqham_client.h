@@ -112,6 +112,8 @@ typedef struct {
     int             scope_max;      /* 160 (IC-7610) or 255 (SunSDR/Hermes) */
     int64_t         scope_fs, scope_fe, scope_txf;
     bool            scope_tx;
+    bool            scope_video;    /* the remote sends its scope as JPEG video */
+    uint32_t        video_seq;
 } cqham_state_t;
 
 typedef struct {
@@ -167,6 +169,10 @@ void cqham_client_levels(int *volume, int *mic_gain);
 /* Audio: a complete frame (14-byte header + payload) to send. */
 void cqham_client_send_audio(const uint8_t *frame, size_t len);
 uint32_t cqham_client_my_id(void);
+
+/* The newest video frame of a remote's scope (FTDX101D with a capture
+ * card), scaled into dst (dw x dh, 0xAARRGGBB). False if there is none. */
+bool cqham_client_video(uint32_t *dst, int dw, int dh);
 
 /* Diagnostic log on the DATA partition (/mnt/cqham_log.txt) */
 void cqham_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));

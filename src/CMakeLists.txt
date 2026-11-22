@@ -100,6 +100,7 @@ pkg_check_modules(deps REQUIRED IMPORTED_TARGET
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
 PkgConfig::deps
+jpeg
 ft8_core ft8_app QTH
 cfg
 cat_core cat_transport

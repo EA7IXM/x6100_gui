@@ -95,6 +95,7 @@ static cqham_config_t conf;
 static float      s_meter;          /* 0..1 */
 static float      noise_floor = 0.12f;
 static float      lvl[SC_W];
+static uint32_t   wf_hist[WF_H * SC_W];
 static float      rem_cur[SC_W];
 static float      knob_angle;
 static uint32_t   tick_n;
@@ -420,9 +421,62 @@ static void scope_compute_remote(void) {
     }
 }
 
+/* "Glass" over the scope: a soft white sheen fading down the top of the
+ * picture, a bright top edge, a diagonal glare and a cyan glow along the
+ * bottom. Precomputed once as an alpha map. */
+static uint8_t glass_map[SC_H][SC_W];
+static int     glass_rows_top, glass_ready;
+
+static void glass_build(void) {
+    int top = (int)(SC_H * 0.55f);
+    glass_rows_top = top;
+    for (int y = 0; y < SC_H; y++) {
+        for (int x = 0; x < SC_W; x++) {
+            float a = 0.0f;
+            if (y < top) {
+                float k = 1.0f - (float)y / top;
+                a += 0.17f * k * k;                         /* sheen */
+                float c = x - (SC_W * 0.12f + y * 1.6f);    /* diagonal glare */
+                a += 0.08f * expf(-(c * c) / (2.0f * 26.0f * 26.0f)) * k;
+            }
+            if (y == 0) a = 0.55f;                          /* bright top edge */
+            if (y == 1) a = fmaxf(a, 0.25f);
+            a = fminf(a, 0.6f);
+            glass_map[y][x] = (uint8_t)(a * 255.0f);
+        }
+    }
+    glass_ready = 1;
+}
+
+static void glass_apply(void) {
+    if (!glass_ready) glass_build();
+    for (int y = 0; y < glass_rows_top; y++) {
+        uint32_t *row = &canvas_buf[y * SC_W].full;
+        for (int x = 0; x < SC_W; x++) {
+            uint8_t a = glass_map[y][x];
+            if (a) row[x] = blend(row[x], 0xFFFFFFFFu, a / 255.0f);
+        }
+    }
+    /* cyan glow along the bottom edge */
+    for (int y = SC_H - 3; y < SC_H; y++) {
+        float     a   = 0.18f * (y - (SC_H - 4));
+        uint32_t *row = &canvas_buf[y * SC_W].full;
+        for (int x = 0; x < SC_W; x++) row[x] = blend(row[x], rgb(80, 200, 255), a);
+    }
+}
+
 static void scope_render(void) {
     bool remote = s.remote && s.scope_on && s.scope_fe > s.scope_fs;
     float t     = tick_n * 0.05f;
+
+    /* FTDX101D: the remote's own scope picture, glass on top */
+    if (remote && s.scope_video) {
+        if (cqham_client_video((uint32_t *)canvas_buf, SC_W, SC_H)) {
+            glass_apply();
+            lv_obj_invalidate(canvas);
+            return;
+        }
+    }
 
     if (remote) scope_compute_remote();
     else scope_compute_cqham(t);
@@ -509,19 +563,28 @@ static void scope_render(void) {
     /* VFO / TX marker */
     int vx = (int)((vfo - lo) / span * SC_W);
     uint32_t vcol = remote ? (s.scope_tx ? rgb(255, 80, 100) : rgb(90, 255, 160)) : rgb(0xff, 0xcf, 0x3f);
-    for (int y = 0; y < SC_H; y++) canvas_px(vx, y, y < SP_H ? vcol : blend(canvas_buf[y * SC_W + (vx < 0 ? 0 : (vx >= SC_W ? SC_W - 1 : vx))].full, vcol, 0.7f));
-
     /* axis strip */
     for (int y = SP_H; y < WF_Y; y++)
         for (int x = 0; x < SC_W; x++) canvas_buf[y * SC_W + x].full = rgb(0x0a, 0x18, 0x26);
 
-    /* waterfall: one row every 90 ms */
+    /* waterfall: one row every 90 ms, kept in its own buffer so the glass
+     * is drawn over a copy and never builds up as the rows scroll */
     int64_t now = now_ms();
     if (now - last_wf_ms >= 90) {
         last_wf_ms = now;
-        memmove(&canvas_buf[(WF_Y + 1) * SC_W], &canvas_buf[WF_Y * SC_W], (size_t)(WF_H - 1) * SC_W * sizeof(lv_color_t));
-        for (int x = 0; x < SC_W; x++) canvas_buf[WF_Y * SC_W + x].full = wf_color(lvl[x]);
+        memmove(wf_hist + SC_W, wf_hist, (size_t)(WF_H - 1) * SC_W * sizeof(uint32_t));
+        for (int x = 0; x < SC_W; x++) wf_hist[x] = wf_color(lvl[x]);
     }
+    memcpy(&canvas_buf[WF_Y * SC_W], wf_hist, (size_t)WF_H * SC_W * sizeof(uint32_t));
+
+    /* VFO / TX marker */
+    for (int y = 0; y < SC_H; y++) {
+        if (vx < 0 || vx >= SC_W) break;
+        uint32_t *p = &canvas_buf[y * SC_W + vx].full;
+        *p          = y < SP_H ? vcol : blend(*p, vcol, 0.7f);
+    }
+
+    glass_apply();
     lv_obj_invalidate(canvas);
 }
 
@@ -532,6 +595,17 @@ static int64_t   axis_lo, axis_hi;
 static void axis_update(void) {
     bool    remote = s.remote && s.scope_on && s.scope_fe > s.scope_fs;
     int64_t lo, hi;
+
+    /* the video picture has its own scale */
+    static int video_shown = -1;
+    int        video       = remote && s.scope_video;
+    if (video != video_shown) {
+        video_shown = video;
+        for (int i = 0; i < 5; i++) {
+            if (video) lv_obj_add_flag(axis_lbl[i], LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_clear_flag(axis_lbl[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
     if (remote) {
         lo = s.scope_fs;
         hi = s.scope_fe;
@@ -1275,13 +1349,38 @@ static void construct_cb(lv_obj_t *parent) {
     lv_label_set_long_mode(lbl_users, LV_LABEL_LONG_CLIP);
     lv_obj_set_height(lbl_users, 44);
 
+    /* glass frame: rounded, clipped corners, light rim and a blue halo */
+    lv_obj_t *frame = lv_obj_create(lcd);
+    lv_obj_remove_style_all(frame);
+    lv_obj_set_pos(frame, 2, DIALOG_HEIGHT - 4 - SC_H - 6);
+    lv_obj_set_size(frame, SC_W, SC_H);
+    lv_obj_set_style_radius(frame, 10, 0);
+    lv_obj_set_style_clip_corner(frame, true, 0);
+    lv_obj_set_style_bg_opa(frame, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(frame, lv_color_hex(0x02060a), 0);
+    lv_obj_set_style_shadow_width(frame, 16, 0);
+    lv_obj_set_style_shadow_color(frame, lv_color_hex(0x2a8aff), 0);
+    lv_obj_set_style_shadow_opa(frame, LV_OPA_60, 0);
+    lv_obj_clear_flag(frame, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+
     canvas_buf = lv_mem_alloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR(SC_W, SC_H));
-    canvas     = lv_canvas_create(lcd);
+    canvas     = lv_canvas_create(frame);
     if (canvas_buf) {
         lv_canvas_set_buffer(canvas, canvas_buf, SC_W, SC_H, LV_IMG_CF_TRUE_COLOR);
         lv_canvas_fill_bg(canvas, lv_color_hex(0x02060a), LV_OPA_COVER);
     }
-    lv_obj_set_pos(canvas, 2, DIALOG_HEIGHT - 4 - SC_H - 6);
+    lv_obj_set_pos(canvas, 0, 0);
+    memset(wf_hist, 0, sizeof(wf_hist));
+
+    /* the rim, drawn over the picture */
+    lv_obj_t *rim = lv_obj_create(frame);
+    lv_obj_remove_style_all(rim);
+    lv_obj_set_size(rim, SC_W, SC_H);
+    lv_obj_set_style_radius(rim, 10, 0);
+    lv_obj_set_style_border_width(rim, 2, 0);
+    lv_obj_set_style_border_color(rim, lv_color_hex(0x9fdcff), 0);
+    lv_obj_set_style_border_opa(rim, LV_OPA_70, 0);
+    lv_obj_clear_flag(rim, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     for (int i = 0; i < 5; i++) {
         axis_lbl[i] = mk_label(canvas, &sony_14, 0x7d9ab3, SC_W * (2 * i + 1) / 10 - 30, SP_H - 1, 60,
                                LV_TEXT_ALIGN_CENTER, "");

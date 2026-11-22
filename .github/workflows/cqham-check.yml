@@ -34,7 +34,7 @@ jobs:
         fi
 
     - name: Packages
-      run: sudo apt-get update && sudo apt-get install -y gcc libgnutls28-dev libpulse-dev libliquid-dev
+      run: sudo apt-get update && sudo apt-get install -y gcc libgnutls28-dev libpulse-dev libliquid-dev libjpeg-dev
 
     - name: Compile the CQHAM sources (no link)
       run: |

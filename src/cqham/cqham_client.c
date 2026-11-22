@@ -11,6 +11,7 @@
 #include "../cJSON.h"
 
 #include <ctype.h>
+#include <setjmp.h>
 #include <math.h>
 #include <pthread.h>
 #include <signal.h>
@@ -20,6 +21,8 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+
+#include <jpeglib.h>    /* after stdio.h: it uses FILE */
 
 #define RECONNECT_MS        5000
 #define HELLO_TIMEOUT_MS    14000
@@ -376,6 +379,117 @@ static bool do_login(void) {
     return good;
 }
 
+/***** Remote scope as video (JPEG) *****/
+
+static pthread_mutex_t video_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint32_t       *video_px;        /* 0xFFRRGGBB */
+static int             video_w, video_h;
+
+struct jerr {
+    struct jpeg_error_mgr pub;
+    jmp_buf               jump;
+};
+
+static void jerr_exit(j_common_ptr cinfo) {
+    struct jerr *e = (struct jerr *)cinfo->err;
+    longjmp(e->jump, 1);
+}
+
+static void jerr_quiet(j_common_ptr cinfo) {
+    (void)cinfo;
+}
+
+/* Decodes one JPEG into video_px. The capture's 1280 px is halved by
+ * libjpeg itself (the LCD shows ~600 px), which keeps it light. */
+static bool video_decode(const uint8_t *jpg, size_t n) {
+    struct jpeg_decompress_struct cinfo;
+    struct jerr                   jerr;
+    uint32_t                     *px  = NULL;
+    uint8_t                      *row = NULL;
+
+    cinfo.err               = jpeg_std_error(&jerr.pub);
+    jerr.pub.error_exit     = jerr_exit;
+    jerr.pub.output_message = jerr_quiet;
+    if (setjmp(jerr.jump)) {
+        jpeg_destroy_decompress(&cinfo);
+        free(px);
+        free(row);
+        return false;
+    }
+
+    jpeg_create_decompress(&cinfo);
+    jpeg_mem_src(&cinfo, (unsigned char *)jpg, (unsigned long)n);
+    if (jpeg_read_header(&cinfo, TRUE) != JPEG_HEADER_OK) {
+        jpeg_destroy_decompress(&cinfo);
+        return false;
+    }
+    cinfo.out_color_space = JCS_RGB;
+    cinfo.scale_num       = 1;
+    cinfo.scale_denom     = cinfo.image_width > 960 ? 2 : 1;
+    cinfo.dct_method      = JDCT_IFAST;
+    jpeg_start_decompress(&cinfo);
+
+    int w = (int)cinfo.output_width, h = (int)cinfo.output_height;
+    if (w <= 0 || h <= 0 || w > 2048 || h > 1024 || cinfo.output_components != 3) {
+        jpeg_abort_decompress(&cinfo);
+        jpeg_destroy_decompress(&cinfo);
+        return false;
+    }
+    px  = malloc((size_t)w * h * sizeof(uint32_t));
+    row = malloc((size_t)w * 3);
+    if (!px || !row) {
+        jpeg_abort_decompress(&cinfo);
+        jpeg_destroy_decompress(&cinfo);
+        free(px);
+        free(row);
+        return false;
+    }
+    while (cinfo.output_scanline < cinfo.output_height) {
+        int      y   = (int)cinfo.output_scanline;
+        JSAMPROW rp  = row;
+        jpeg_read_scanlines(&cinfo, &rp, 1);
+        uint32_t *o = px + (size_t)y * w;
+        for (int x = 0; x < w; x++) {
+            o[x] = 0xFF000000u | ((uint32_t)row[3 * x] << 16) | ((uint32_t)row[3 * x + 1] << 8) | row[3 * x + 2];
+        }
+    }
+    jpeg_finish_decompress(&cinfo);
+    jpeg_destroy_decompress(&cinfo);
+    free(row);
+
+    pthread_mutex_lock(&video_lock);
+    free(video_px);
+    video_px = px;
+    video_w  = w;
+    video_h  = h;
+    pthread_mutex_unlock(&video_lock);
+    return true;
+}
+
+bool cqham_client_video(uint32_t *dst, int dw, int dh) {
+    pthread_mutex_lock(&video_lock);
+    if (!video_px || video_w <= 0 || video_h <= 0) {
+        pthread_mutex_unlock(&video_lock);
+        return false;
+    }
+    /* bilinear-lite: nearest row, linear blend across x */
+    for (int y = 0; y < dh; y++) {
+        const uint32_t *src = video_px + (size_t)(y * video_h / dh) * video_w;
+        uint32_t       *o   = dst + (size_t)y * dw;
+        for (int x = 0; x < dw; x++) {
+            int fx  = x * ((video_w - 1) << 8) / (dw > 1 ? dw - 1 : 1);
+            int i   = fx >> 8, f = fx & 0xFF;
+            int j   = i + 1 < video_w ? i + 1 : i;
+            uint32_t a = src[i], b = src[j];
+            uint32_t rb = (((a & 0xFF00FF) * (256 - f) + (b & 0xFF00FF) * f) >> 8) & 0xFF00FF;
+            uint32_t g  = (((a & 0x00FF00) * (256 - f) + (b & 0x00FF00) * f) >> 8) & 0x00FF00;
+            o[x]        = 0xFF000000u | rb | g;
+        }
+    }
+    pthread_mutex_unlock(&video_lock);
+    return true;
+}
+
 /***** Incoming *****/
 
 static const char *jstr(cJSON *o, const char *k) {
@@ -563,6 +677,7 @@ static void handle_text(const char *txt) {
         notice_l(true, "Scope remoto: necesitas licencia");
     } else if (!strcmp(t, "scope_data")) {
         const char *d = jstr(m, "d");
+        st.scope_video = false;
         if (d) {
             size_t n = cqham_b64_decode(d, st.scope, sizeof(st.scope));
             int    mx = 0;
@@ -581,7 +696,29 @@ static void handle_text(const char *txt) {
             st.scope_seq++;
         }
     } else if (!strcmp(t, "scope_img")) {
-        if (!st.scope_on) notice_l(false, "Este remoto envia el scope en video (no soportado aun)");
+        /* FTDX101D: the scope as a JPEG picture, ~4 per second */
+        const char *d = jstr(m, "d");
+        if (d) {
+            size_t   cap = strlen(d) * 3 / 4 + 4;
+            uint8_t *jpg = malloc(cap);
+            if (jpg) {
+                size_t n = cqham_b64_decode(d, jpg, cap);
+                pthread_mutex_unlock(&lock);
+                bool ok = video_decode(jpg, n);
+                pthread_mutex_lock(&lock);
+                free(jpg);
+                if (ok) {
+                    st.scope_video = true;
+                    st.scope_on    = true;
+                    st.scope_fs    = (int64_t)llround(jnum(m, "fs", 0) * 1e6);
+                    st.scope_fe    = (int64_t)llround(jnum(m, "fe", 0) * 1e6);
+                    st.scope_tx    = jtrue(m, "tx");
+                    const char *l  = jstr(m, "link");
+                    if (l) snprintf(st.link, sizeof(st.link), "%s", l);
+                    st.video_seq++;
+                }
+            }
+        }
     } else if (!strcmp(t, "scope_audio")) {
         const char *d = jstr(m, "d");
         if (d) {
