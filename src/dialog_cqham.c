@@ -1164,7 +1164,6 @@ static void btn_step_cb(button_data_t *d);
 static void btn_pwr_cb(button_data_t *d);
 static void btn_exit_cb(button_data_t *d);
 static void btn_login_cb(button_data_t *d);
-static void btn_mic_cb(button_data_t *d);
 static void btn_room_cb(button_data_t *d);
 static void btn_remote_cb(button_data_t *d);
 static void btn_grant_cb(button_data_t *d);
@@ -1195,7 +1194,6 @@ static button_data_t b_step   = {.type = BTN_TEXT_FN, .label_fn = step_label, .p
 static button_data_t b_pwr    = {.type = BTN_TEXT_FN, .label_fn = pwr_label, .press = btn_pwr_cb};
 static button_data_t b_exit   = {.type = BTN_TEXT, .label = "SALIR", .press = btn_exit_cb};
 static button_data_t b_login  = {.type = BTN_TEXT, .label = "CUENTA", .press = btn_login_cb};
-static button_data_t b_mic    = {.type = BTN_TEXT_FN, .label_fn = mic_label, .press = btn_mic_cb};
 static button_data_t b_room   = {.type = BTN_TEXT_FN, .label_fn = room_label, .press = btn_room_cb};
 static button_data_t b_remote = {.type = BTN_TEXT_FN, .label_fn = remote_label, .press = btn_remote_cb};
 static button_data_t b_probe  = {.type = BTN_TEXT, .label = "BUSCAR\nREMOTO", .press = btn_probe_cb};
@@ -1279,8 +1277,32 @@ static void btn_rband_cb(button_data_t *d) {
 }
 
 static button_data_t b_rband  = {.type = BTN_TEXT_FN, .label_fn = rband_label, .press = btn_rband_cb};
-static buttons_page_t page2 = {{&b_p2, &b_step, &b_pwr, &b_mic, &b_rband}};
-static buttons_page_t page5 = {{&b_p5, &b_login, NULL, NULL, NULL}};
+/* MIC gain on page 5, one by one: MIC - / value / MIC + (hold: 5 by 5) */
+static button_data_t b_micv;
+
+static void mic_step(int d) {
+    int g = conf.mic_gain + d;
+    if (g < 0) g = 0;
+    if (g > 100) g = 100;
+    conf.mic_gain = g;
+    cqham_client_set_mic_gain(g);
+    buttons_refresh(&b_micv);
+}
+
+static void btn_mic_dn_cb(button_data_t *d)      { (void)d; mic_step(-1); }
+static void btn_mic_up_cb(button_data_t *d)      { (void)d; mic_step(+1); }
+static void btn_mic_dn_hold_cb(button_data_t *d) { (void)d; mic_step(-5); }
+static void btn_mic_up_hold_cb(button_data_t *d) { (void)d; mic_step(+5); }
+static void btn_micv_cb(button_data_t *d)        { (void)d; }
+
+static button_data_t b_mic_dn = {.type = BTN_TEXT, .label = "MIC\n-", .press = btn_mic_dn_cb,
+                                 .hold = btn_mic_dn_hold_cb};
+static button_data_t b_mic_up = {.type = BTN_TEXT, .label = "MIC\n+", .press = btn_mic_up_cb,
+                                 .hold = btn_mic_up_hold_cb};
+static button_data_t b_micv   = {.type = BTN_TEXT_FN, .label_fn = mic_label, .press = btn_micv_cb};
+
+static buttons_page_t page2 = {{&b_p2, &b_step, &b_pwr, &b_login, &b_rband}};
+static buttons_page_t page5 = {{&b_p5, &b_mic_dn, &b_micv, &b_mic_up, NULL}};
 static buttons_page_t page3 = {{&b_p3, &b_room, &b_remote, &b_probe, &b_go}};
 static const char *audio_label(void) {
     static char b[24];
@@ -1352,12 +1374,6 @@ static void btn_exit_cb(button_data_t *d) {
 static void btn_login_cb(button_data_t *d) {
     (void)d;
     login_start();
-}
-
-static void btn_mic_cb(button_data_t *d) {
-    conf.mic_gain = conf.mic_gain >= 100 ? 20 : conf.mic_gain + 10;
-    cqham_client_set_mic_gain(conf.mic_gain);
-    buttons_refresh(d);
 }
 
 static void btn_room_cb(button_data_t *d) {
