@@ -17,6 +17,7 @@
 #include "cqham_client.h"
 
 #include "../audio.h"
+#include "../radio.h"
 #include "../dsp.h"
 #include "../cfg/cfg_api.h"
 
@@ -303,13 +304,19 @@ static void slot_read(slot_t *s, float *mix) {
  *   7 TX DIRECTO  as SIN-REC, and the mode is NOT changed on PTT: the
  *              voice-record flag drops the base out of TX (log of v5),
  *              so the mic is taken from the capture stream as it is
+ *   8 AUTO PTT    the base keys on the mic PTT only with the voice-record
+ *              flag OFF, and plays CQHAM only with it ON (v6 tests). So:
+ *              flag off while nobody talks (PTT at once); while CQHAM
+ *              plays, flag off for PROBE_MS every PROBE_PERIOD to see
+ *              whether the base keys; while the base is in TX (my mic
+ *              PTT) the flag stays off: no CQHAM audio, no own voice.
  * pttmode is put back as it was when leaving 5/6 and on close. */
 static atomic_int listen_variant;
 static uint32_t   pttmode_saved;
 static bool       pttmode_touched;
 
 const char *cqham_audio_variant_name(int v) {
-    static const char *n[CQHAM_AUDIO_VARIANTS] = {"AUTO", "PLAY", "PLAY+MIC", "REC", "SIN-REC", "PTTM 1", "PTTM 2", "TX DIRECTO"};
+    static const char *n[CQHAM_AUDIO_VARIANTS] = {"AUTO", "PLAY", "PLAY+MIC", "REC", "SIN-REC", "PTTM 1", "PTTM 2", "TX DIRECTO", "AUTO PTT"};
     return (v >= 0 && v < CQHAM_AUDIO_VARIANTS) ? n[v] : "?";
 }
 
@@ -340,6 +347,10 @@ static void apply_play(int variant) {
             break;
         case 3:
             audio_set_play_mode(AUDIO_PLAY_VOICE_REC);
+            break;
+        case 8:
+            audio_set_play_mode(AUDIO_PLAY_ON);
+            x6100_control_hmic_set(param_i_get(cfg.hmic()));
             break;
         case 4:
         case 7:
@@ -394,6 +405,59 @@ static void apply_mode(base_mode_t m) {
                                               : "VOICE_REC (micro a CQHAM)");
 }
 
+/* AUTO PTT (variant 8): the voice-record flag, see the list above */
+#define PROBE_PERIOD  700
+#define PROBE_MS      110
+#define TX_TAIL_MS    300
+static int      rec_state = -1;     /* -1 unknown, 0 off, 1 on */
+static int64_t  tx_tail_until;
+static int64_t  probe_t0;
+static bool     probe_logged;
+
+static void rec_set(bool on) {
+    if (rec_state == (int)on) return;
+    x6100_control_record_set(on);
+    rec_state = on;
+}
+
+/* true while CQHAM audio can be heard (flag on) */
+static bool auto_ptt_step(bool tx, bool busy) {
+    bool    base_tx = radio_get_state() == RADIO_TX;
+    int64_t now     = now_ms();
+
+    if (tx && !base_tx) {
+        /* PTT from the screen / key / F1: the base is not keyed, the
+         * mic comes through voice-record as always */
+        if (mode_applied != MODE_REC) rec_state = -1;
+        apply_mode(MODE_REC);
+        tx_tail_until = now + TX_TAIL_MS;
+        return false;
+    }
+    if (mode_applied != MODE_PLAY) rec_state = -1;   /* PLAY_ON sets the flag again */
+    apply_mode(MODE_PLAY);
+
+    bool want;
+    if (tx || base_tx) {
+        want = false;                                /* my over: nothing on the speaker */
+        tx_tail_until = now + TX_TAIL_MS;
+        if (!probe_logged && base_tx) {
+            cqham_log("AUTO PTT: la base entro en TX (PTT del micro)");
+            probe_logged = true;
+        }
+    } else if (now < tx_tail_until) {
+        want = false;
+    } else if (!busy) {
+        want = false;                                /* quiet: the mic PTT keys at once */
+        probe_t0 = now;
+        probe_logged = false;
+    } else {
+        want = (now - probe_t0) % PROBE_PERIOD >= PROBE_MS;   /* playing, with a peek */
+        probe_logged = false;
+    }
+    rec_set(want);
+    return want;
+}
+
 static void *play_fn(void *arg) {
     (void)arg;
     pthread_setname_np(pthread_self(), "cqham-play");
@@ -410,9 +474,15 @@ static void *play_fn(void *arg) {
         bool        busy = now_ms() - atomic_load(&last_rx_ms) < PLAY_HOLD_MS;
         int         var   = atomic_load(&listen_variant);
         bool        autom = var == 0;
-        base_mode_t want  = tx ? (var == 7 ? MODE_PLAY : MODE_REC)
-                         : ((busy || !mic_ptt_armed || !autom) ? MODE_PLAY : MODE_IDLE);
-        apply_mode(want);
+        bool        audible = true;
+        if (var == 8 && mic_ptt_armed) {
+            audible = auto_ptt_step(tx, busy);
+        } else {
+            rec_state = -1;
+            base_mode_t want  = tx ? (var == 7 ? MODE_PLAY : MODE_REC)
+                             : ((busy || !mic_ptt_armed || !autom) ? MODE_PLAY : MODE_IDLE);
+            apply_mode(want);
+        }
 
         memset(mix, 0, sizeof(mix));
         if (!tx) {
@@ -426,6 +496,7 @@ static void *play_fn(void *arg) {
         cqham_client_levels(&vol, NULL);
         float g   = (vol / 100.0f) * 1.2f;
         float sum = 0.0f;
+        if (!audible) g = 0.0f;
         for (int i = 0; i < FRAME; i++) {
             float v = mix[i] * g;
             sum += mix[i] * mix[i];

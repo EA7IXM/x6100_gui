@@ -127,7 +127,7 @@ static void config_defaults(cqham_config_t *c) {
     c->mic_gain = 50;
     c->volume   = 70;
     c->ptt_micro = 1;
-    c->audio_variant = 0;
+    c->audio_variant = CQHAM_AUDIO_DEFAULT;
 }
 
 static char *trim(char *s) {
