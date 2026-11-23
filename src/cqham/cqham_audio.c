@@ -609,7 +609,7 @@ static void ext_follow(void) {
     snprintf(dev, sizeof(dev), "%s", ext_dev);
     pthread_mutex_unlock(&ext_lock);
     if (dev[0]) {
-        ext_player = audio_create_player_on(dev, RATE, 1);
+        ext_player = audio_create_player_on(dev, RATE, 2);   /* stereo: both speakers */
         cqham_log("SALIDA externa %s: %s", dev, ext_player ? "abierta" : "FALLO");
     }
     atomic_store(&ext_on, ext_player != NULL);
@@ -793,7 +793,9 @@ static void *play_fn(void *arg) {
         }
 
         if (ext) {
-            if (audio_player_send(ext_player, out, FRAME) < 0) usleep(20000);
+            int16_t st2[FRAME * 2];                /* mono -> both channels */
+            for (int i = 0; i < FRAME; i++) st2[2 * i] = st2[2 * i + 1] = out[i];
+            if (audio_player_send(ext_player, st2, FRAME * 2) < 0) usleep(20000);
         } else if (player) {
             audio_player_send(player, out, FRAME);   /* blocks: paces the loop */
         } else {
