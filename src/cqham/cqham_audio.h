@@ -29,7 +29,7 @@ float cqham_audio_rx_level(void);    /* 0..1, for the S-meter */
 float cqham_audio_mic_level(void);   /* 0..1, for the MIC bar */
 
 /* Listening-mode test variants (see cqham_audio.c) */
-#define CQHAM_AUDIO_VARIANTS 9
+#define CQHAM_AUDIO_VARIANTS 10
 #define CQHAM_AUDIO_DEFAULT  8   /* AUTO PTT */
 void        cqham_audio_set_variant(int v);
 int         cqham_audio_get_variant(void);

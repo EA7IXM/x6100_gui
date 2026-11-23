@@ -332,7 +332,7 @@ static uint32_t   pttmode_saved;
 static bool       pttmode_touched;
 
 const char *cqham_audio_variant_name(int v) {
-    static const char *n[CQHAM_AUDIO_VARIANTS] = {"AUTO", "PLAY", "PLAY+MIC", "REC", "SIN-REC", "PTTM 1", "PTTM 2", "TX DIRECTO", "AUTO PTT"};
+    static const char *n[CQHAM_AUDIO_VARIANTS] = {"AUTO", "PLAY", "PLAY+MIC", "REC", "SIN-REC", "PTTM 1", "PTTM 2", "TX DIRECTO", "AUTO PTT", "REMOTO FLUIDO"};
     return (v >= 0 && v < CQHAM_AUDIO_VARIANTS) ? n[v] : "?";
 }
 
@@ -365,6 +365,7 @@ static void apply_play(int variant) {
             audio_set_play_mode(AUDIO_PLAY_VOICE_REC);
             break;
         case 8:
+        case 9:
             audio_set_play_mode(AUDIO_PLAY_ON);
             x6100_control_hmic_set(param_i_get(cfg.hmic()));   /* the base keys only with it */
             break;
@@ -478,6 +479,12 @@ static bool auto_ptt_step(bool tx, bool busy) {
          * only when it ends anyway; then the PTT keys at once) */
         want = true;
         probe_logged = false;
+    } else if (now - atomic_load(&last_remote_ms) < 500 && atomic_load(&listen_variant) == 9) {
+        /* REMOTO FLUIDO: never cut the remote's audio; over it the mic PTT
+         * is not seen (the base gives no sign of it while playing): F1,
+         * the front PTT key or the screen's PTT key it at once */
+        want = true;
+        probe_logged = false;
     } else if (now - atomic_load(&last_remote_ms) < 500) {
         /* a remote's receiver, endless: peek in a pause of its audio, or
          * at least every PROBE_MAX_GAP */
@@ -540,7 +547,7 @@ static void *play_fn(void *arg) {
         bool        autom = var == 0;
         moni_follow();
         bool        audible = true;
-        if (var == 8 && mic_ptt_armed) {
+        if ((var == 8 || var == 9) && mic_ptt_armed) {
             audible = auto_ptt_step(tx, busy);
         } else {
             rec_state = -1;
