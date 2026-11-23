@@ -726,12 +726,28 @@ static void update_texts(void) {
     if (s.ptt && ptt_by_key) lv_obj_clear_flag(lbl_bigtx, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(lbl_bigtx, LV_OBJ_FLAG_HIDDEN);
     {
-        /* the base ignores the hand mic PTT while it plays CQHAM: say so */
-        bool        blind = conf.ptt_micro && cqham_audio_mic_ptt_blind();
-        const char *h     = blind ? "Para hablar usa la tecla PTT de arriba" : "PTT: micro, tecla PTT o F1";
+        /* on-screen PTT log: can the hand mic PTT be seen right now? */
+        char     out[16], h[96];
+        int      o       = cqham_audio_output(out, sizeof(out));
+        bool     base_tx = radio_get_state() == RADIO_TX;
+        bool     blind   = o != 1 && conf.ptt_micro && cqham_audio_mic_ptt_blind();
+        uint32_t col;
+        if (base_tx) {
+            snprintf(h, sizeof(h), "PTT micro: DETECTADO (TX)\nSalida: %s", o == 1 ? out : "radio");
+            col = 0xff6b6b;
+        } else if (blind) {
+            snprintf(h, sizeof(h), "PTT micro: NO (suena audio)\nusa la tecla PTT de arriba");
+            col = 0xffcf3f;
+        } else if (o == 2) {
+            snprintf(h, sizeof(h), "PTT micro: LISTO\nSin altavoz BT/USB: radio");
+            col = 0xffcf3f;
+        } else {
+            snprintf(h, sizeof(h), "PTT micro: LISTO\nSalida: %s", o == 1 ? out : "radio");
+            col = 0x4cd964;
+        }
         if (strcmp(lv_label_get_text(lbl_hint), h)) {
             lv_label_set_text(lbl_hint, h);
-            lv_obj_set_style_text_color(lbl_hint, lv_color_hex(blind ? 0xffcf3f : 0x7d9ab3), 0);
+            lv_obj_set_style_text_color(lbl_hint, lv_color_hex(col), 0);
         }
     }
 
@@ -918,6 +934,7 @@ static void timer_cb(lv_timer_t *t) {
     tick_n++;
 
     base_ptt_poll();
+    cqham_audio_output_poll(false);
 
     float prev = s_meter;
     update_smeter();
@@ -1164,7 +1181,26 @@ static void btn_audio_cb(button_data_t *d) {
 }
 
 static button_data_t b_audio  = {.type = BTN_TEXT_FN, .label_fn = audio_label, .press = btn_audio_cb};
-static buttons_page_t page4 = {{&b_p4, &b_grant, &b_deny, &b_audio, NULL}};
+static const char *out_label(void) {
+    static char b[32];
+    char        n[16];
+    int         o = cqham_audio_output(n, sizeof(n));
+    snprintf(b, sizeof(b), "SALIDA\n%s", o == 0 ? "RADIO" : (o == 1 ? n : "BT/USB ?"));
+    return b;
+}
+
+static void btn_out_cb(button_data_t *d) {
+    int ext = cqham_audio_output(NULL, 0) == 0;
+    cqham_audio_set_output(ext);
+    cqham_client_set_output(ext);
+    if (!ext) show_notice("Sonido por el altavoz de la radio", false);
+    else if (cqham_audio_output(NULL, 0) == 1) show_notice("Sonido por Bluetooth / USB: PTT del micro siempre", false);
+    else show_notice("No hay altavoz Bluetooth ni USB conectado", true);
+    buttons_refresh(d);
+}
+
+static button_data_t b_out    = {.type = BTN_TEXT_FN, .label_fn = out_label, .press = btn_out_cb};
+static buttons_page_t page4 = {{&b_p4, &b_grant, &b_deny, &b_audio, &b_out}};
 
 static void btn_ptt_cb(button_data_t *d) {
     ptt_by_key = !s.ptt;
@@ -1480,6 +1516,7 @@ static void construct_cb(lv_obj_t *parent) {
     cqham_audio_start();
     cqham_audio_set_variant(CQHAM_AUDIO_DEFAULT);      /* REMOTO FLUIDO at every start */
     cqham_client_set_audio_variant(CQHAM_AUDIO_DEFAULT);
+    cqham_audio_set_output(conf.out_ext);
     cqham_client_get(&s);
 
     memset(lvl, 0, sizeof(lvl));

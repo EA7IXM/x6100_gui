@@ -183,6 +183,7 @@ void cqham_config_load(cqham_config_t *c) {
         else if (!strcmp(k, "mic"))        c->mic_gain = atoi(v);
         else if (!strcmp(k, "volumen"))    c->volume = atoi(v);
         else if (!strcmp(k, "variante_audio")) c->audio_variant = atoi(v);
+        else if (!strcmp(k, "salida")) c->out_ext = (v[0] == 'e' || v[0] == 'b' || v[0] == 'u' || v[0] == '1');
         else if (!strcmp(k, "ptt_micro")) {
             if (!strcmp(v, "no") || !strcmp(v, "0")) c->ptt_micro = 0;
             else if (!strcmp(v, "voz") || !strcmp(v, "2")) c->ptt_micro = 2;
@@ -221,6 +222,8 @@ void cqham_config_save(const cqham_config_t *c) {
             "ptt_micro=%s\n"
             "# variante de audio (boton AUDIO, pag.4): 0 AUTO 1 PLAY 2 PLAY+MIC 3 REC 4 SIN-REC 5 PTTM1 6 PTTM2\n"
             "variante_audio=%d\n"
+            "# sonido de CQHAM: radio (altavoz) o externa (Bluetooth / USB: el PTT del micro siempre funciona)\n"
+            "salida=%s\n"
             "\n# Lo guarda la radio sola:\n"
             "token=%s\n"
             "frecuencia=%lld\n"
@@ -231,7 +234,7 @@ void cqham_config_save(const cqham_config_t *c) {
             "mic=%d\n"
             "volumen=%d\n",
             c->callsign, c->password, c->server, c->port, c->tls, c->verify,
-            c->ptt_micro == 0 ? "no" : (c->ptt_micro == 2 ? "voz" : "cw"), c->audio_variant, c->token,
+            c->ptt_micro == 0 ? "no" : (c->ptt_micro == 2 ? "voz" : "cw"), c->audio_variant, c->out_ext ? "externa" : "radio", c->token,
             (long long)c->freq, cqham_mode_name((cqham_mode_t)c->mode), c->room, c->power,
             c->step, c->mic_gain, c->volume);
     fflush(f);
@@ -1109,6 +1112,13 @@ void cqham_client_set_step(int hz) {
 void cqham_client_set_mic_gain(int g) {
     pthread_mutex_lock(&lock);
     cfg.mic_gain = g < 0 ? 0 : (g > 100 ? 100 : g);
+    pthread_mutex_unlock(&lock);
+}
+
+void cqham_client_set_output(int ext) {
+    pthread_mutex_lock(&lock);
+    cfg.out_ext = ext ? 1 : 0;
+    cqham_config_save(&cfg);
     pthread_mutex_unlock(&lock);
 }
 
