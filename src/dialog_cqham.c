@@ -49,7 +49,9 @@
 /* Geometry inside the dialog (796 x 345) */
 #define PANEL_W     176
 #define LCD_X       2
-#define LCD_W       (DIALOG_WIDTH - 8)   /* the right panel is hidden: its data is in the LCD */
+#define LCD_W       (DIALOG_WIDTH - 8)
+#define CQ_TALL     20                      /* the S-meter grows by this, the window moves down */
+#define CQ_H        (DIALOG_HEIGHT - CQ_TALL)   /* the right panel is hidden: its data is in the LCD */
 #define SC_W        (LCD_W - 8)
 #define SC_H        196
 #define SP_H        92          /* spectrum */
@@ -182,7 +184,7 @@ static lv_obj_t *mk_panel(lv_obj_t *parent, lv_coord_t x, lv_coord_t w) {
     lv_obj_t *p = lv_obj_create(parent);
     lv_obj_remove_style_all(p);
     lv_obj_set_pos(p, x, 2);
-    lv_obj_set_size(p, w, DIALOG_HEIGHT - 4);
+    lv_obj_set_size(p, w, CQ_H - 4);
     lv_obj_set_style_radius(p, 10, 0);
     lv_obj_set_style_bg_opa(p, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(p, lv_color_hex(0x20262e), 0);
@@ -1531,6 +1533,9 @@ static void btn_goto_cb(button_data_t *d) {
 static void construct_cb(lv_obj_t *parent) {
     dialog.obj = dialog_init(parent);
     lv_obj_t *o = dialog.obj;
+    lv_obj_set_style_translate_y(o, CQ_TALL, 0);   /* room for a taller S-meter */
+    lv_obj_set_height(o, CQ_H);
+    meter_tall(CQ_TALL);
 
     lv_obj_set_style_bg_img_src(o, NULL, 0);
     lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
@@ -1551,7 +1556,7 @@ static void construct_cb(lv_obj_t *parent) {
     lv_obj_t *lcd = lv_obj_create(o);
     lv_obj_remove_style_all(lcd);
     lv_obj_set_pos(lcd, LCD_X, 2);
-    lv_obj_set_size(lcd, LCD_W, DIALOG_HEIGHT - 4);
+    lv_obj_set_size(lcd, LCD_W, CQ_H - 4);
     lv_obj_set_style_radius(lcd, 8, 0);
     lv_obj_set_style_bg_opa(lcd, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(lcd, lv_color_hex(C_LCD1), 0);
@@ -1588,7 +1593,7 @@ static void construct_cb(lv_obj_t *parent) {
     /* glass frame: rounded, clipped corners, light rim and a blue halo */
     lv_obj_t *frame = lv_obj_create(lcd);
     lv_obj_remove_style_all(frame);
-    lv_obj_set_pos(frame, 2, DIALOG_HEIGHT - 4 - SC_H - 6);
+    lv_obj_set_pos(frame, 2, CQ_H - 4 - SC_H - 6);
     lv_obj_set_size(frame, SC_W, SC_H);
     lv_obj_set_style_radius(frame, 10, 0);
     lv_obj_set_style_clip_corner(frame, true, 0);
@@ -1679,9 +1684,9 @@ static void construct_cb(lv_obj_t *parent) {
     tx_sub = lv_msg_subscribe(MSG_RADIO_TX, radio_tx_cb, NULL);
     rx_sub = lv_msg_subscribe(MSG_RADIO_RX, radio_rx_cb, NULL);
 
-    net_create(lcd, 2, DIALOG_HEIGHT - 4 - SC_H - 6);
+    net_create(lcd, 2, CQ_H - 4 - SC_H - 6);
 
-    lbl_bigtx = mk_label(lcd, &sony_60, 0xff2d2d, 0, DIALOG_HEIGHT - 4 - SC_H + 20, LCD_W,
+    lbl_bigtx = mk_label(lcd, &sony_60, 0xff2d2d, 0, CQ_H - 4 - SC_H + 20, LCD_W,
                          LV_TEXT_ALIGN_CENTER, "TX");
     lv_obj_add_flag(lbl_bigtx, LV_OBJ_FLAG_HIDDEN);
 
@@ -1745,6 +1750,7 @@ static void destruct_cb(void) {
     x6100_control_bias_final_set((uint16_t)(bias_saved >> 16));
     cqham_log("RF normal: polarizacion del PA restaurada 0x%08x", (unsigned)bias_saved);
     tx_info_cqham(false);
+    meter_tall(0);
     meter_external(false);
     net_open = false;
     cqham_log("VENTANA cerrada");

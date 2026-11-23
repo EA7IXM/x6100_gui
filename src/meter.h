@@ -37,4 +37,6 @@ void meter_set_mode(meter_mode_t mode);
 /* EA7IXM: while on, the meter shows the levels given to meter_external_set()
  * (main thread) instead of the receiver's. */
 void meter_external(bool on);
+/* EA7IXM: CQHAM open: the meter grows down by extra px (0 = normal) */
+void meter_tall(int extra);
 void meter_external_set(float db);

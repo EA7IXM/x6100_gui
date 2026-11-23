@@ -18,3 +18,6 @@ lv_obj_t *meter_needle_create(lv_obj_t *parent);
 void meter_needle_set(float db, float peak_db);
 
 void meter_needle_show(bool show);
+
+/* EA7IXM: the parent changed height: new face, arc lowered by apex_extra */
+void meter_needle_relayout(int apex_extra);

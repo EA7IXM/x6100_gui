@@ -56,6 +56,7 @@ static float         drawn_frac = -1.0f, drawn_peak = -1.0f;
 static float         db_now = S_MIN;
 
 static lv_timer_t   *timer;
+static lv_obj_t     *parent_obj;
 
 static float db_to_frac(float db) {
     if (db <= S1) {
@@ -270,6 +271,7 @@ static void tick_cb(lv_timer_t *t) {
 /***** API *****/
 
 lv_obj_t *meter_needle_create(lv_obj_t *parent) {
+    parent_obj = parent;
     lv_obj_update_layout(parent);
     W = lv_obj_get_width(parent);
     H = lv_obj_get_height(parent);
@@ -313,6 +315,29 @@ void meter_needle_set(float db, float peak_db) {
     db_now           = db;
     target_frac      = db_to_frac(db);
     peak_target_frac = db_to_frac(peak_db);
+}
+
+void meter_needle_relayout(int apex_extra) {
+    if (!canvas || !parent_obj) return;
+    lv_obj_update_layout(parent_obj);
+    lv_coord_t nw = lv_obj_get_width(parent_obj);
+    lv_coord_t nh = lv_obj_get_height(parent_obj);
+    if (nw != W || nh != H) {
+        lv_color_t *nb = malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR_ALPHA(nw, nh));
+        if (!nb) return;
+        W = nw;
+        H = nh;
+        lv_canvas_set_buffer(canvas, nb, W, H, LV_IMG_CF_TRUE_COLOR_ALPHA);
+        free(canvas_buf);
+        canvas_buf = nb;
+        lv_obj_set_size(needle_obj, W, H);
+    }
+    cx         = W / 2.0f;
+    cy         = 26.0f + apex_extra + R;
+    half_angle = asinf((W / 2.0f - 40.0f) / R);
+    draw_face();
+    drawn_frac = drawn_peak = -1.0f;
+    lv_obj_invalidate(canvas);
 }
 
 void meter_needle_show(bool show) {

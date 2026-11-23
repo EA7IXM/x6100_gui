@@ -257,6 +257,14 @@ void meter_set_mode(meter_mode_t mode) {
  * window is open); the receiver's level is ignored meanwhile. */
 static volatile bool meter_ext;
 
+void meter_tall(int extra) {
+    if (!obj) return;
+    lv_obj_set_height(obj, TOP_BLOCK_SMALL_HEIGHT + extra);
+    lv_obj_set_style_translate_y(obj, extra / 2, 0);   /* the flex row centres it: keep the top */
+    lv_obj_update_layout(obj);
+    meter_needle_relayout(extra ? 8 : 0);
+}
+
 void meter_external(bool on) {
     meter_ext  = on;
     meter_db   = S1;
