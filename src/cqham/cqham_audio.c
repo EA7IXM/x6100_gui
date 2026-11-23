@@ -300,13 +300,16 @@ static void slot_read(slot_t *s, float *mix) {
  *   4 SIN-REC  play mode with the voice-record flag cleared
  *   5 PTTM 1   play mode, pttmode bits (reg 21, bits 2-3) = 1
  *   6 PTTM 2   play mode, pttmode bits = 2
+ *   7 TX DIRECTO  as SIN-REC, and the mode is NOT changed on PTT: the
+ *              voice-record flag drops the base out of TX (log of v5),
+ *              so the mic is taken from the capture stream as it is
  * pttmode is put back as it was when leaving 5/6 and on close. */
 static atomic_int listen_variant;
 static uint32_t   pttmode_saved;
 static bool       pttmode_touched;
 
 const char *cqham_audio_variant_name(int v) {
-    static const char *n[CQHAM_AUDIO_VARIANTS] = {"AUTO", "PLAY", "PLAY+MIC", "REC", "SIN-REC", "PTTM 1", "PTTM 2"};
+    static const char *n[CQHAM_AUDIO_VARIANTS] = {"AUTO", "PLAY", "PLAY+MIC", "REC", "SIN-REC", "PTTM 1", "PTTM 2", "TX DIRECTO"};
     return (v >= 0 && v < CQHAM_AUDIO_VARIANTS) ? n[v] : "?";
 }
 
@@ -339,6 +342,7 @@ static void apply_play(int variant) {
             audio_set_play_mode(AUDIO_PLAY_VOICE_REC);
             break;
         case 4:
+        case 7:
             audio_set_play_mode(AUDIO_PLAY_ON);
             x6100_control_record_set(false);
             x6100_control_hmic_set(param_i_get(cfg.hmic()));
@@ -404,8 +408,9 @@ static void *play_fn(void *arg) {
     while (atomic_load(&running)) {
         bool        tx   = atomic_load(&tx_on);
         bool        busy = now_ms() - atomic_load(&last_rx_ms) < PLAY_HOLD_MS;
-        bool        autom = atomic_load(&listen_variant) == 0;
-        base_mode_t want  = tx ? MODE_REC
+        int         var   = atomic_load(&listen_variant);
+        bool        autom = var == 0;
+        base_mode_t want  = tx ? (var == 7 ? MODE_PLAY : MODE_REC)
                          : ((busy || !mic_ptt_armed || !autom) ? MODE_PLAY : MODE_IDLE);
         apply_mode(want);
 
@@ -535,8 +540,8 @@ void cqham_audio_tx(bool on) {
     } else {
         atomic_store(&mic_level, 0.0f);
         int frames = atomic_load(&stat_tx_frames);
-        cqham_log("AUDIO TX fin: %d bloques del micro, %d tramas enviadas, nivel medio %.3f",
-                  atomic_load(&stat_mic_cb), frames,
+        cqham_log("AUDIO TX fin (variante %s): %d bloques del micro, %d tramas enviadas, nivel medio %.3f",
+                  cqham_audio_variant_name(atomic_load(&listen_variant)), atomic_load(&stat_mic_cb), frames,
                   frames ? atomic_load(&stat_mic_sum) / frames : 0.0f);
     }
     atomic_store(&tx_on, on);

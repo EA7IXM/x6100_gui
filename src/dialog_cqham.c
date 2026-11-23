@@ -1441,12 +1441,12 @@ static void construct_cb(lv_obj_t *parent) {
      * radio's range) kept the base from keying at all: no mic PTT. */
     cqham_client_config(&conf);
     radio_vfo = (x6100_vfo_t)param_i_get(cfg.band.current_vfo());
-    if (conf.ptt_micro == 1) {
+    if (conf.ptt_micro) {
         x6100_control_vfo_mode_set(radio_vfo, x6100_mode_cw);
     }
     x6100_control_txpwr_set(conf.ptt_micro ? 0.1f : 0.0f);
     cqham_log("VENTANA abierta: ptt_micro=%d (radio %s, %.1f W)", conf.ptt_micro,
-              conf.ptt_micro == 1 ? "en CW" : "en su modo", conf.ptt_micro ? 0.1 : 0.0);
+              conf.ptt_micro ? "en CW" : "en su modo", conf.ptt_micro ? 0.1 : 0.0);
 
     tx_sub = lv_msg_subscribe(MSG_RADIO_TX, radio_tx_cb, NULL);
     rx_sub = lv_msg_subscribe(MSG_RADIO_RX, radio_rx_cb, NULL);
@@ -1497,7 +1497,7 @@ static void destruct_cb(void) {
     cqham_audio_stop();
 
     /* the radio as it was */
-    if (conf.ptt_micro == 1) {
+    if (conf.ptt_micro) {
         x6100_control_vfo_mode_set(radio_vfo, (x6100_mode_t)cparam_i_get(cfg.cur.mode()));
     }
     x6100_control_txpwr_set(param_f_get(cfg.pwr()));
