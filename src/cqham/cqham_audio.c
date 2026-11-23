@@ -213,7 +213,19 @@ void cqham_audio_rx(const uint8_t *frame, size_t len) {
     int watts = pw & 0x1FFF;
     if (watts == 0) watts = 100;
     atomic_fetch_add(&stat_rx_frames, 1);
-    atomic_store(&last_voice_ms, now_ms());
+    {
+        /* a remote station (link bit 0x2000) transmits all the time: it is
+         * peeked over like scope_audio, or I could never key it. A "voice"
+         * with no pause for 15 s is taken as a remote as well. */
+        static int64_t voice_start;
+        int64_t        t = now_ms();
+        if (t - atomic_load(&last_voice_ms) > 600 && t - atomic_load(&last_remote_ms) > 600) voice_start = t;
+        if ((pw & 0x2000) || t - voice_start > 15000) {
+            atomic_store(&last_remote_ms, t);
+        } else {
+            atomic_store(&last_voice_ms, t);
+        }
+    }
     atomic_store(&last_rx_ms, now_ms());
 
     int64_t      my_freq;
