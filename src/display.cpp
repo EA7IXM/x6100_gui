@@ -40,8 +40,9 @@ static void on_display_invert_change(Subject * /*subj*/, void * /*user_data*/) {
 }
 
 static void display_timer(lv_timer_t *t) {
-    display_set_brightness(cfg.display.brightness_idle()->get());
-    x6100_gpio_set(x6100_pin_light, cfg.display.brightness_buttons()->get() == BUTTONS_LIGHT ? 1 : 0);
+    /* EA7IXM: never dimmed: screen and buttons always at full */
+    display_set_brightness(9);
+    x6100_gpio_set(x6100_pin_light, 1);
     timer = NULL;
 }
 
@@ -82,8 +83,8 @@ void display_tick() {
         timer = lv_timer_create(display_timer, cfg.display.brightness_timeout()->get() * 1000, NULL);
         lv_timer_set_repeat_count(timer, 1);
 
-        display_set_brightness(cfg.display.brightness_normal()->get());
-        x6100_gpio_set(x6100_pin_light, cfg.display.brightness_buttons()->get() == BUTTONS_DARK ? 0 : 1);
+        display_set_brightness(9);
+        x6100_gpio_set(x6100_pin_light, 1);
     }
 }
 

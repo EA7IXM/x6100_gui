@@ -47,7 +47,7 @@
 /* Geometry inside the dialog (796 x 345) */
 #define PANEL_W     176
 #define LCD_X       2
-#define LCD_W       (DIALOG_WIDTH - PANEL_W - 8)
+#define LCD_W       (DIALOG_WIDTH - 8)   /* the right panel is hidden: its data is in the LCD */
 #define SC_W        (LCD_W - 8)
 #define SC_H        196
 #define SP_H        92          /* spectrum */
@@ -81,6 +81,8 @@ dialog_t *dialog_cqham = &dialog;
 
 static lv_obj_t   *meter_obj, *knob_obj;
 static lv_obj_t   *lbl_tags, *lbl_freq, *lbl_status, *lbl_notice, *lbl_users, *lbl_conn;
+static lv_obj_t   *lbl_info;         /* VOL / MIC / PTT state, under EN EL CANAL */
+static lv_obj_t   *lbl_sig;          /* the talker's sig and its S value */
 static lv_obj_t   *lbl_pwr, *lbl_step, *lbl_vol, *lbl_mic, *lbl_hint, *mic_bar;
 static lv_obj_t   *lbl_bigtx;       /* big red TX: CQHAM PTT by key / F1 / screen */
 static lv_obj_t   *led_tx, *led_rx, *led_sq;
@@ -757,6 +759,12 @@ static void update_texts(void) {
             lv_label_set_text(lbl_hint, h);
             lv_obj_set_style_text_color(lbl_hint, lv_color_hex(col), 0);
         }
+        char info[160];
+        char *nlp = strchr(h, '\n');
+        if (nlp) *nlp = '\0';
+        snprintf(info, sizeof(info), "VOL %d   MIC %d\n#%06x %s#", conf.volume, conf.mic_gain,
+                 (unsigned)col, h);
+        if (strcmp(lv_label_get_text(lbl_info), info)) lv_label_set_text(lbl_info, info);
     }
 
     led_set(led_tx, s.tx_on, 0xff453a);
@@ -950,6 +958,15 @@ static void timer_cb(lv_timer_t *t) {
     {
         /* CQHAM's 0..1 scale (marks S1 S3 S5 S7 S9 +20 +40 +60 at k/7) to dBm
          * for the radio's own meter */
+        char sg[48];
+        if (s.talker[0] && s.talker_sig >= 0.0f && !s.tx_on) {
+            float sv = s.talker_sig;
+            if (sv <= 4.0f / 7.0f) snprintf(sg, sizeof(sg), "sig %.2f = S%d", sv, (int)lroundf(1.0f + sv * 14.0f));
+            else snprintf(sg, sizeof(sg), "sig %.2f = S9+%d", sv, (int)lroundf((sv - 4.0f / 7.0f) * 140.0f));
+        } else {
+            snprintf(sg, sizeof(sg), "sig --");
+        }
+        if (strcmp(lv_label_get_text(lbl_sig), sg)) lv_label_set_text(lbl_sig, sg);
         float k  = s_meter * 7.0f;
         float db = k <= 4.0f ? S1 + k * 12.0f : S9 + (k - 4.0f) * 20.0f;
         meter_external_set(db);
@@ -1539,11 +1556,13 @@ static void construct_cb(lv_obj_t *parent) {
     lv_obj_set_style_shadow_color(lcd, lv_color_hex(0x2a6aa0), 0);
     lv_obj_clear_flag(lcd, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-    lbl_tags = mk_label(lcd, &sony_16, 0xa8d8ff, 8, 4, LCD_W - 16, LV_TEXT_ALIGN_LEFT, "");
+    lbl_tags = mk_label(lcd, &sony_16, 0xa8d8ff, 8, 4, LCD_W - 250, LV_TEXT_ALIGN_LEFT, "");
+    lbl_sig  = mk_label(lcd, &sony_16, 0x5affa0, LCD_W - 238, 4, 230, LV_TEXT_ALIGN_RIGHT, "");
     lv_label_set_recolor(lbl_tags, true);
     lbl_freq = mk_label(lcd, &mono_48, 0xd8ecff, 0, 24, LCD_W, LV_TEXT_ALIGN_CENTER, "");
     lv_obj_set_style_text_letter_space(lbl_freq, 1, 0);
-    lbl_status = mk_label(lcd, &sony_18, 0x9fc7e8, 0, 76, LCD_W, LV_TEXT_ALIGN_CENTER, "");
+    lbl_status = mk_label(lcd, &sony_18, 0x9fc7e8, 170, 76, LCD_W - 340, LV_TEXT_ALIGN_CENTER, "");
+    lv_label_set_long_mode(lbl_status, LV_LABEL_LONG_DOT);
     lbl_notice = mk_label(lcd, &sony_16, 0xffcf3f, 0, 98, LCD_W, LV_TEXT_ALIGN_CENTER, "");
 
     /* LCD corners: connection + LEDs on the left, who is on my channel on the right */
@@ -1556,6 +1575,8 @@ static void construct_cb(lv_obj_t *parent) {
     lv_label_set_recolor(lbl_users, true);
     lv_label_set_long_mode(lbl_users, LV_LABEL_LONG_CLIP);
     lv_obj_set_height(lbl_users, 44);
+    lbl_info = mk_label(lcd, &sony_14, 0xcdd6dd, LCD_W - 168, 72, 160, LV_TEXT_ALIGN_RIGHT, "");
+    lv_label_set_recolor(lbl_info, true);
 
     /* glass frame: rounded, clipped corners, light rim and a blue halo */
     lv_obj_t *frame = lv_obj_create(lcd);
@@ -1597,6 +1618,7 @@ static void construct_cb(lv_obj_t *parent) {
 
     /* Right panel: tuning */
     lv_obj_t *rp = mk_panel(o, DIALOG_WIDTH - PANEL_W - 2, PANEL_W);
+    lv_obj_add_flag(rp, LV_OBJ_FLAG_HIDDEN);   /* its data is shown in the LCD */
     mk_label(rp, &sony_14, C_TITLE, 0, 4, PANEL_W, LV_TEXT_ALIGN_CENTER, "TUNING");
     knob_obj = lv_obj_create(rp);
     lv_obj_remove_style_all(knob_obj);
