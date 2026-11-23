@@ -332,7 +332,7 @@ static uint32_t   pttmode_saved;
 static bool       pttmode_touched;
 
 const char *cqham_audio_variant_name(int v) {
-    static const char *n[CQHAM_AUDIO_VARIANTS] = {"AUTO", "PLAY", "PLAY+MIC", "REC", "SIN-REC", "PTTM 1", "PTTM 2", "TX DIRECTO", "AUTO PTT", "REMOTO FLUIDO"};
+    static const char *n[CQHAM_AUDIO_VARIANTS] = {"AUTO", "PLAY", "PLAY+MIC", "REC", "SIN-REC", "PTTM 1", "PTTM 2", "TX DIRECTO", "AUTO PTT", "REMOTO FLUIDO", "BUSCAR PTT"};
     return (v >= 0 && v < CQHAM_AUDIO_VARIANTS) ? n[v] : "?";
 }
 
@@ -366,6 +366,7 @@ static void apply_play(int variant) {
             break;
         case 8:
         case 9:
+        case 10:
             audio_set_play_mode(AUDIO_PLAY_ON);
             x6100_control_hmic_set(param_i_get(cfg.hmic()));   /* the base keys only with it */
             break;
@@ -529,6 +530,63 @@ static void moni_follow(void) {
     }
 }
 
+/* BUSCAR PTT (variant 10): with CQHAM playing (voice-record flag on), walk
+ * every pttmode x mic-select setting and the modem bit, 3 s each, while the
+ * operator holds the mic PTT; log which ones key the base. */
+#define SCAN_STEP_MS 3000
+#define SCAN_STEPS   16
+static int      scan_step = -1;
+static int64_t  scan_t;
+static uint32_t scan_reg_saved;
+static int      scan_hits[SCAN_STEPS];
+
+static void scan_apply(int i) {
+    uint32_t r = scan_reg_saved & ~0x0Fu;
+    bool modem = false;
+    if (i < 12) {
+        r |= (uint32_t)(i / 3) << 2;            /* pttmode 0..3 */
+        r |= (uint32_t)(i % 3);                 /* micsel 0 int, 1 hand, 2 auto */
+    } else {
+        r |= scan_reg_saved & 0x0Fu;
+        if (i == 12) modem = true;
+        if (i == 13) r ^= 1u << 4;              /* chge */
+        if (i == 14) r ^= 1u << 6;              /* auxiqgen */
+        if (i == 15) { modem = true; r = (r & ~0x0Fu) | 1u; }
+    }
+    x6100_control_cmd(x6100_micsel_pttmode_chge_spmode_auxiqgen_sqlthr, r);
+    x6100_control_modem_set(modem);
+    x6100_control_record_set(true);
+    cqham_log("BUSCAR PTT paso %d: registro 0x%08x modem=%d", i, (unsigned)r, modem);
+}
+
+static void scan_run(void) {
+    int64_t now = now_ms();
+    if (scan_step < 0) {
+        scan_reg_saved = x6100_control_get(x6100_micsel_pttmode_chge_spmode_auxiqgen_sqlthr);
+        memset(scan_hits, 0, sizeof(scan_hits));
+        scan_step = 0;
+        scan_t    = now;
+        cqham_log("BUSCAR PTT: empieza (registro 0x%08x). Manten el PTT del micro", (unsigned)scan_reg_saved);
+        scan_apply(0);
+        return;
+    }
+    if (scan_step >= SCAN_STEPS) return;
+    if (radio_get_state() == RADIO_TX) scan_hits[scan_step]++;
+    if (now - scan_t >= SCAN_STEP_MS) {
+        cqham_log("BUSCAR PTT paso %d -> base en TX %d veces", scan_step, scan_hits[scan_step]);
+        scan_step++;
+        scan_t = now;
+        if (scan_step < SCAN_STEPS) {
+            scan_apply(scan_step);
+        } else {
+            x6100_control_cmd(x6100_micsel_pttmode_chge_spmode_auxiqgen_sqlthr, scan_reg_saved);
+            x6100_control_modem_set(false);
+            x6100_control_record_set(true);
+            cqham_log("BUSCAR PTT: fin, registro restaurado");
+        }
+    }
+}
+
 static void *play_fn(void *arg) {
     (void)arg;
     pthread_setname_np(pthread_self(), "cqham-play");
@@ -547,7 +605,17 @@ static void *play_fn(void *arg) {
         bool        autom = var == 0;
         moni_follow();
         bool        audible = true;
-        if ((var == 8 || var == 9) && mic_ptt_armed) {
+        if (var != 10 && scan_step >= 0 && scan_step < SCAN_STEPS) {
+            x6100_control_cmd(x6100_micsel_pttmode_chge_spmode_auxiqgen_sqlthr, scan_reg_saved);
+            x6100_control_modem_set(false);
+            scan_step = SCAN_STEPS;
+            cqham_log("BUSCAR PTT: cortado, registro restaurado");
+        }
+        if (var == 10) {
+            if (mode_applied != MODE_PLAY) { apply_mode(MODE_PLAY); scan_step = -1; }
+            scan_run();
+            audible = !tx;
+        } else if ((var == 8 || var == 9) && mic_ptt_armed) {
             audible = auto_ptt_step(tx, busy);
         } else {
             rec_state = -1;
@@ -745,6 +813,11 @@ void cqham_audio_stop(void) {
         audio_player_release(player);
         player = NULL;
     }
+    if (scan_step >= 0 && scan_step < SCAN_STEPS) {
+        x6100_control_cmd(x6100_micsel_pttmode_chge_spmode_auxiqgen_sqlthr, scan_reg_saved);
+        x6100_control_modem_set(false);
+    }
+    scan_step = -1;
     pttmode_restore();
     if (moni_muted) {
         x6100_control_moni_set(param_i_get(cfg.moni()));
