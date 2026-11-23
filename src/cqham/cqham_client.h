@@ -101,6 +101,8 @@ typedef struct {
     /* remote station */
     char            link[24];       /* "" = no link on my channel */
     int64_t         link_freq;
+    int             link_bands_n;   /* the remote's bands (hf_bands_list) */
+    char            link_bands[12][8];
     char            holder[CQHAM_CALL_LEN];
     char            ctrl_req_by[CQHAM_CALL_LEN];   /* someone asks me for the control */
     bool            remote;         /* the window is in remote-scope mode */

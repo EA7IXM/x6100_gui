@@ -974,7 +974,40 @@ static void tune_to(int64_t f, cqham_mode_t m) {
     s.mode = m;
 }
 
+/* REMOTO on: BAND moves the remote to its next / previous band (the ones it
+ * has, from hf_bands_list), at that band's usual frequency */
+static bool remote_band_step(int dir) {
+    if (!s.remote || !s.link[0]) return false;
+    if (s.link_bands_n == 0) {
+        cqham_client_remote_probe();
+        show_notice("Pidiendo las bandas del remoto: pulsa otra vez", false);
+        return true;
+    }
+    const cqham_band_t *cur = band();
+    int                 k   = -1;
+    for (int i = 0; i < s.link_bands_n; i++) {
+        if (cur && !strcmp(s.link_bands[i], cur->name)) k = i;
+    }
+    k = (k < 0) ? 0 : (k + dir + s.link_bands_n) % s.link_bands_n;
+    for (int bi = 0; bi < cqham_bands_count(); bi++) {
+        const cqham_band_t *b = cqham_band_at(bi);
+        if (!strcmp(b->name, s.link_bands[k])) {
+            int64_t f = cqham_band_default_freq(bi);
+            rq_freq   = f;          /* the rate limiter sends the remote QSY */
+            s.freq    = f;
+            char msg[48];
+            snprintf(msg, sizeof(msg), "Remoto a %s", b->name);
+            show_notice(msg, false);
+            voice_say_text_fmt("%s", b->name);
+            return true;
+        }
+    }
+    show_notice("Banda del remoto desconocida", true);
+    return true;
+}
+
 static void band_step(int dir) {
+    if (remote_band_step(dir)) return;
     int n  = cqham_bands_count();
     int bi = band_idx();
     bi     = ((bi < 0 ? 0 : bi) + dir + n) % n;

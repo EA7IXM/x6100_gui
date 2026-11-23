@@ -685,6 +685,17 @@ static void handle_text(const char *txt) {
         const char *l = jstr(m, "link");
         snprintf(st.link, sizeof(st.link), "%s", l ? l : "");
         st.link_freq = (int64_t)llround(jnum(m, "freq", 0) * 1e6);
+        st.link_bands_n = 0;
+        cJSON *bl = cJSON_GetObjectItem(m, "bands");
+        if (cJSON_IsArray(bl)) {
+            cJSON *it;
+            cJSON_ArrayForEach(it, bl) {
+                if (cJSON_IsString(it) && st.link_bands_n < 12) {
+                    snprintf(st.link_bands[st.link_bands_n++], sizeof(st.link_bands[0]), "%s", it->valuestring);
+                }
+            }
+        }
+        cqham_log("REMOTO %s: %d bandas", st.link, st.link_bands_n);
     } else if (!strcmp(t, "hf_aviso_remoto")) {
         const char *l = jstr(m, "link");
         if (l) snprintf(st.link, sizeof(st.link), "%s", l);
@@ -762,7 +773,13 @@ static void handle_text(const char *txt) {
              * transmitted on another (v15) */
             double f = jnum(m, "freq", 0);
             if (f > 0) {
-                st.freq = (int64_t)llround(f * 1e6);
+                int64_t nf  = (int64_t)llround(f * 1e6);
+                int     ob  = cqham_band_index_for(st.freq), nb = cqham_band_index_for(nf);
+                if (nb >= 0 && nb != ob) {
+                    st.mode  = cqham_band_at(nb)->mode;
+                    cfg.mode = st.mode;
+                }
+                st.freq = nf;
                 cfg.freq = st.freq;
             }
             resend_tune = true;
