@@ -123,6 +123,8 @@ typedef enum { MODE_NONE = -1, MODE_IDLE, MODE_PLAY, MODE_REC } base_mode_t;
 
 static base_mode_t    mode_applied = MODE_NONE;
 static atomic_llong   last_rx_ms;
+static atomic_llong   last_voice_ms;   /* a voice of the network (relay frames) */
+static atomic_llong   last_remote_ms;  /* a remote's receiver (scope_audio) */
 static bool           mic_ptt_armed;
 #define PLAY_HOLD_MS  1500
 
@@ -211,6 +213,7 @@ void cqham_audio_rx(const uint8_t *frame, size_t len) {
     int watts = pw & 0x1FFF;
     if (watts == 0) watts = 100;
     atomic_fetch_add(&stat_rx_frames, 1);
+    atomic_store(&last_voice_ms, now_ms());
     atomic_store(&last_rx_ms, now_ms());
 
     int64_t      my_freq;
@@ -237,6 +240,7 @@ void cqham_audio_rx(const uint8_t *frame, size_t len) {
 
 void cqham_audio_rx_pcm(const int16_t *pcm, size_t n) {
     if (!atomic_load(&running) || atomic_load(&tx_on)) return;
+    atomic_store(&last_remote_ms, now_ms());
     atomic_store(&last_rx_ms, now_ms());
     pthread_mutex_lock(&rx_lock);
     if (!remote_slot.used) slot_reset(&remote_slot, 0xFFFFFFFFu);
@@ -411,7 +415,6 @@ static void apply_mode(base_mode_t m) {
 #define TX_TAIL_MS    300
 static int      rec_state = -1;     /* -1 unknown, 0 off, 1 on */
 static int64_t  tx_tail_until;
-static int64_t  probe_t0;
 static bool     probe_logged;
 
 /* flag on = CQHAM on the speaker: hand mic gain 0 then, or the base sends
@@ -424,7 +427,14 @@ static void rec_set(bool on) {
 }
 
 /* true while CQHAM audio can be heard (flag on) */
+/* last mixed level and its slow average, for peeking in a pause */
+static float   mix_rms, mix_avg;
+static int64_t probe_until, probe_last;
+#define PROBE_MAX_GAP  1500   /* a peek at least this often over a remote */
+#define PROBE_MIN_GAP   350
+
 static bool auto_ptt_step(bool tx, bool busy) {
+    (void)busy;
     bool    base_tx = radio_get_state() == RADIO_TX;
     int64_t now     = now_ms();
 
@@ -449,12 +459,27 @@ static bool auto_ptt_step(bool tx, bool busy) {
         }
     } else if (now < tx_tail_until) {
         want = false;
-    } else if (!busy) {
-        want = false;                                /* quiet: the mic PTT keys at once */
-        probe_t0 = now;
+    } else if (now < probe_until) {
+        want = false;                                /* peeking: the base may key */
+    } else if (now - atomic_load(&last_voice_ms) < 600) {
+        /* a voice of the network: never cut it (CQHAM gives me the channel
+         * only when it ends anyway; then the PTT keys at once) */
+        want = true;
+        probe_logged = false;
+    } else if (now - atomic_load(&last_remote_ms) < 500) {
+        /* a remote's receiver, endless: peek in a pause of its audio, or
+         * at least every PROBE_MAX_GAP */
+        bool pause = mix_rms < 0.02f || mix_rms < mix_avg * 0.45f;
+        if (now - probe_last >= PROBE_MAX_GAP || (pause && now - probe_last >= PROBE_MIN_GAP)) {
+            probe_until = now + PROBE_MS;
+            probe_last  = now;
+            want        = false;
+        } else {
+            want = true;
+        }
         probe_logged = false;
     } else {
-        want = (now - probe_t0) % PROBE_PERIOD >= PROBE_MS;   /* playing, with a peek */
+        want = false;                                /* quiet: the mic PTT keys at once */
         probe_logged = false;
     }
     rec_set(want);
@@ -533,6 +558,8 @@ static void *play_fn(void *arg) {
             out[i] = (int16_t)(v * 32767.0f);
         }
         float rms = sqrtf(sum / FRAME) * 3.0f;
+        mix_rms = rms;
+        mix_avg = mix_avg * 0.98f + rms * 0.02f;
         lvl       = lvl * 0.6f + (rms > 1.0f ? 1.0f : rms) * 0.4f;
         atomic_store(&rx_level, lvl);
 
@@ -659,6 +686,8 @@ void cqham_audio_start(void) {
     atomic_store(&tx_on, false);
     atomic_store(&tx_mode_applied, true);   /* forces the first apply */
     atomic_store(&last_rx_ms, 0);
+    atomic_store(&last_voice_ms, 0);
+    atomic_store(&last_remote_ms, 0);
     {
         cqham_config_t c;
         cqham_client_config(&c);
