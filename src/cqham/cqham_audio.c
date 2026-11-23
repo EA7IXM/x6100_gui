@@ -442,8 +442,8 @@ static void rec_set(bool on) {
 /* last mixed level and its slow average, for peeking in a pause */
 static float   mix_rms, mix_avg;
 static int64_t probe_until, probe_last;
-#define PROBE_MAX_GAP   500   /* a peek at least this often over a remote */
-#define PROBE_MIN_GAP   250
+#define PROBE_MAX_GAP   800   /* a peek at least this often over a remote */
+#define PROBE_MIN_GAP   600
 
 static bool auto_ptt_step(bool tx, bool busy) {
     (void)busy;
