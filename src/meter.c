@@ -7,6 +7,7 @@
  */
 
 #include "meter.h"
+#include <stdio.h>
 #include "meter_needle.h"
 #include "styles.h"
 #include "events.h"
@@ -263,6 +264,17 @@ void meter_tall(int extra) {
     lv_obj_set_style_translate_y(obj, extra / 2, 0);   /* the flex row centres it: keep the top */
     lv_obj_update_layout(obj);
     meter_needle_relayout(extra ? 8 : 0);
+    {   /* EA7IXM: what the layout really gave (debug of the taller meter) */
+        FILE *f = fopen("/tmp/meter_tall.txt", "a");
+        if (f) {
+            lv_obj_t *pp = lv_obj_get_parent(obj);
+            fprintf(f, "extra=%d obj y=%d h=%d content_h=%d parent h=%d flags=%x
+", extra, (int)lv_obj_get_y(obj),
+                    (int)lv_obj_get_height(obj), (int)lv_obj_get_content_height(obj), (int)lv_obj_get_height(pp),
+                    (unsigned)lv_obj_get_style_max_height(obj, 0));
+            fclose(f);
+        }
+    }
 }
 
 void meter_external(bool on) {
