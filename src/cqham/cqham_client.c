@@ -734,12 +734,14 @@ static void handle_text(const char *txt) {
         }
     } else if (!strcmp(t, "hf_qsy_ack") || !strcmp(t, "qsy_ack")) {
         if (jtrue(m, "ok") || jtrue(m, "seguir")) {
+            /* follow the remote only while I am on it (REMOTO on): after
+             * leaving it, its QSYs must not pull me back */
             double f = jnum(m, "freq", 0);
-            if (f > 0) {
+            if (f > 0 && st.remote) {
                 st.freq = (int64_t)llround(f * 1e6);
                 cfg.freq = st.freq;
+                resend_tune = true;
             }
-            resend_tune = true;
         } else {
             const char *r = jstr(m, "reason");
             if (r && !strcmp(r, "ctrlpending")) notice_l(false, "Pedido el control a %s", jstr(m, "holder") ? jstr(m, "holder") : "?");
@@ -771,7 +773,7 @@ static void handle_text(const char *txt) {
         if (x) notice_l(false, "%s", x);
     } else if (!strcmp(t, "link_home")) {
         double f = jnum(m, "freq", 0);
-        if (f > 0) {
+        if (f > 0 && st.remote) {
             st.freq  = (int64_t)llround(f * 1e6);
             cfg.freq = st.freq;
             resend_tune = true;

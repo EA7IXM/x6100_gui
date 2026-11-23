@@ -941,7 +941,11 @@ static void band_step(int dir) {
     int bi = band_idx();
     bi     = ((bi < 0 ? 0 : bi) + dir + n) % n;
     const cqham_band_t *b = cqham_band_at(bi);
-    if (s.remote) cqham_client_remote(false);
+    if (s.remote) {
+        s.remote = false;
+        rq_freq  = 0;
+        cqham_client_remote(false);
+    }
     tune_to(cqham_band_default_freq(bi), b->mode);
     voice_say_text_fmt("%s", b->name);
 }
@@ -1196,6 +1200,7 @@ static void btn_room_cb(button_data_t *d) {
 
 static void btn_remote_cb(button_data_t *d) {
     s.remote = !s.remote;
+    if (!s.remote) rq_freq = 0;   /* a pending remote QSY must not go out after */
     cqham_client_remote(s.remote);
     memset(rem_cur, 0, sizeof(rem_cur));
     show_notice(s.remote ? "Scope remoto: sintoniza la frecuencia del remoto" : "Scope de CQHAM", false);
@@ -1298,6 +1303,7 @@ static void btn_goto_cb(button_data_t *d) {
     }
     if (s.remote) {
         s.remote = false;
+        rq_freq  = 0;
         cqham_client_remote(false);
     }
     if (u->room == 'a' || u->room == 'b') {
