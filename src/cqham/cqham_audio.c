@@ -463,11 +463,25 @@ static bool auto_ptt_step(bool tx, bool busy) {
 
 static bool moni_muted;
 
+/* The monitor level is also what reaches the capture stream while the base
+ * is keyed (v9: monitor 0 -> my voice at 0.08 instead of 0.5). So: monitor 0
+ * while listening (no howl), the user's monitor while the base is in TX
+ * (my voice to CQHAM) with the speaker volume 0 (I don't hear myself). */
+static int moni_tx = -1;   /* -1 unknown, 0 listening, 1 base in TX */
+
 static void moni_follow(void) {
-    if (!moni_muted) {
+    int base_tx = radio_get_state() == RADIO_TX;
+    if (base_tx == moni_tx) return;
+    moni_tx    = base_tx;
+    moni_muted = true;
+    if (base_tx) {
+        x6100_control_rxvol_set(0);
+        x6100_control_moni_set(param_i_get(cfg.moni()));
+        cqham_log("AUDIO TX: monitor %d hacia CQHAM, altavoz a 0", param_i_get(cfg.moni()));
+    } else {
         x6100_control_moni_set(0);
-        moni_muted = true;
-        cqham_log("AUDIO monitor a 0 mientras CQHAM esta abierto");
+        x6100_control_rxvol_set(param_i_get(cfg.volume()));
+        cqham_log("AUDIO RX: monitor a 0, altavoz %d", param_i_get(cfg.volume()));
     }
 }
 
@@ -686,8 +700,10 @@ void cqham_audio_stop(void) {
     pttmode_restore();
     if (moni_muted) {
         x6100_control_moni_set(param_i_get(cfg.moni()));
+        x6100_control_rxvol_set(param_i_get(cfg.volume()));
         moni_muted = false;
     }
+    moni_tx = -1;
     audio_set_play_mode(AUDIO_PLAY_OFF);
     x6100_control_rxvol_set(param_i_get(cfg.volume()));   /* the speaker as it was */
     mode_applied = MODE_NONE;
