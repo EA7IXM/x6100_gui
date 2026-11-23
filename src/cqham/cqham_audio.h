@@ -34,3 +34,6 @@ float cqham_audio_mic_level(void);   /* 0..1, for the MIC bar */
 void        cqham_audio_set_variant(int v);
 int         cqham_audio_get_variant(void);
 const char *cqham_audio_variant_name(int v);
+
+/* true while the base plays CQHAM and so ignores the hand mic PTT */
+bool        cqham_audio_mic_ptt_blind(void);

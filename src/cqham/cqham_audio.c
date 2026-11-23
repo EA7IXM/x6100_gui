@@ -428,6 +428,7 @@ static void apply_mode(base_mode_t m) {
 #define PROBE_MS       95
 #define TX_TAIL_MS    300
 static int      rec_state = -1;     /* -1 unknown, 0 off, 1 on */
+static _Atomic int listen_rec;      /* the base plays CQHAM (flag on): capture = mic */
 static int64_t  tx_tail_until;
 static bool     probe_logged;
 
@@ -438,6 +439,12 @@ static void rec_set(bool on) {
     if (rec_state == (int)on) return;
     x6100_control_record_set(on);
     rec_state = on;
+    atomic_store(&listen_rec, on);
+}
+
+bool cqham_audio_mic_ptt_blind(void) {
+    int v = atomic_load(&listen_variant);
+    return (v == 8 || v == 9) && atomic_load(&listen_rec) && !atomic_load(&tx_on);
 }
 
 /* true while CQHAM audio can be heard (flag on) */
@@ -639,6 +646,7 @@ static void *play_fn(void *arg) {
             audible = auto_ptt_step(tx, busy);
         } else {
             rec_state = -1;
+            atomic_store(&listen_rec, 0);
             base_mode_t want  = tx ? (var == 7 ? MODE_PLAY : MODE_REC)
                              : ((busy || !mic_ptt_armed || !autom) ? MODE_PLAY : MODE_IDLE);
             apply_mode(want);
@@ -722,7 +730,30 @@ static void send_frame(void) {
 }
 
 static void mic_cb(size_t n, int16_t *samples) {
-    if (!atomic_load(&tx_on)) return;
+    if (!atomic_load(&tx_on)) {
+        /* listening: is the hand mic heard? level for the MIC bar and the
+         * log, nothing is sent */
+        static float   lv;
+        static int64_t lg;
+        if (!atomic_load(&listen_rec)) {
+            atomic_store(&mic_level, 0.0f);
+            return;
+        }
+        float sum = 0.0f;
+        for (size_t i = 0; i < n; i++) {
+            float x = samples[i] / 32768.0f;
+            sum += x * x;
+        }
+        float rms = n ? sqrtf(sum / n) * 3.0f : 0.0f;
+        lv = lv * 0.7f + (rms > 1.0f ? 1.0f : rms) * 0.3f;
+        atomic_store(&mic_level, lv);
+        int64_t t = now_ms();
+        if (t - lg > 2000) {
+            lg = t;
+            cqham_log("MIC escuchando (sin PTT): nivel %.3f", lv);
+        }
+        return;
+    }
     atomic_fetch_add(&stat_mic_cb, 1);
 
     int mic;
@@ -779,7 +810,7 @@ void cqham_audio_tx(bool on) {
     }
     atomic_store(&tx_on, on);
     if (mic_sub != AUDIO_SUB_INVALID) {
-        dsp_audio_set_active(mic_sub, on);
+        dsp_audio_set_active(mic_sub, true);   /* also listening: the MIC bar */
     }
 }
 
@@ -811,7 +842,7 @@ void cqham_audio_start(void) {
     if (mic_sub == AUDIO_SUB_INVALID) {
         mic_sub = dsp_audio_subscribe_raw(mic_cb, true);
     }
-    dsp_audio_set_active(mic_sub, false);
+    dsp_audio_set_active(mic_sub, true);
 
     atomic_store(&running, true);
     if (pthread_create(&play_thread, NULL, play_fn, NULL) != 0) {

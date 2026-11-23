@@ -82,6 +82,7 @@ dialog_t *dialog_cqham = &dialog;
 static lv_obj_t   *meter_obj, *knob_obj;
 static lv_obj_t   *lbl_tags, *lbl_freq, *lbl_status, *lbl_notice, *lbl_users, *lbl_conn;
 static lv_obj_t   *lbl_pwr, *lbl_step, *lbl_vol, *lbl_mic, *lbl_hint, *mic_bar;
+static lv_obj_t   *lbl_bigtx;       /* big red TX: CQHAM PTT by key / F1 / screen */
 static lv_obj_t   *led_tx, *led_rx, *led_sq;
 static lv_obj_t   *canvas;
 static lv_color_t *canvas_buf;
@@ -721,6 +722,18 @@ static void update_texts(void) {
     snprintf(buf, sizeof(buf), "VOL %d   MIC %d", conf.volume, conf.mic_gain);
     if (strcmp(lv_label_get_text(lbl_vol), buf)) lv_label_set_text(lbl_vol, buf);
     lv_bar_set_value(mic_bar, (int)(cqham_audio_mic_level() * 100), LV_ANIM_OFF);
+
+    if (s.ptt && ptt_by_key) lv_obj_clear_flag(lbl_bigtx, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(lbl_bigtx, LV_OBJ_FLAG_HIDDEN);
+    {
+        /* the base ignores the hand mic PTT while it plays CQHAM: say so */
+        bool        blind = conf.ptt_micro && cqham_audio_mic_ptt_blind();
+        const char *h     = blind ? "Para hablar usa la tecla PTT de arriba" : "PTT: micro, tecla PTT o F1";
+        if (strcmp(lv_label_get_text(lbl_hint), h)) {
+            lv_label_set_text(lbl_hint, h);
+            lv_obj_set_style_text_color(lbl_hint, lv_color_hex(blind ? 0xffcf3f : 0x7d9ab3), 0);
+        }
+    }
 
     led_set(led_tx, s.tx_on, 0xff453a);
     led_set(led_rx, !s.tx_on && s.talker[0], 0x4cd964);
@@ -1459,8 +1472,14 @@ static void construct_cb(lv_obj_t *parent) {
 
     net_create(lcd, 2, DIALOG_HEIGHT - 4 - SC_H - 6);
 
+    lbl_bigtx = mk_label(lcd, &sony_60, 0xff2d2d, 0, DIALOG_HEIGHT - 4 - SC_H + 20, LCD_W,
+                         LV_TEXT_ALIGN_CENTER, "TX");
+    lv_obj_add_flag(lbl_bigtx, LV_OBJ_FLAG_HIDDEN);
+
     cqham_client_start();
     cqham_audio_start();
+    cqham_audio_set_variant(CQHAM_AUDIO_DEFAULT);      /* REMOTO FLUIDO at every start */
+    cqham_client_set_audio_variant(CQHAM_AUDIO_DEFAULT);
     cqham_client_get(&s);
 
     memset(lvl, 0, sizeof(lvl));
