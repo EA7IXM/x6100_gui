@@ -910,8 +910,24 @@ static void session(void) {
         int      op      = cqham_ws_recv(c, &payload, &len, 15);
 
         if (op < 0 || op == CQHAM_WS_CLOSE) {
+            /* why the session ends: the server's close code and reason */
+            if (op == CQHAM_WS_CLOSE && payload && len >= 2) {
+                cqham_log("WS cerrado por el servidor: codigo %d motivo '%.*s'", (payload[0] << 8) | payload[1],
+                          (int)(len - 2), (const char *)payload + 2);
+            } else {
+                cqham_log("WS fin: op=%d len=%u", op, (unsigned)len);
+            }
             free(payload);
             break;
+        }
+        if (op == CQHAM_WS_TEXT && payload) {
+            /* the last messages before a drop */
+            char tb[24] = "";
+            const char *tp = strstr((const char *)payload, "\"t\":\"");
+            if (tp) sscanf(tp + 5, "%23[^\"]", tb);
+            if (strcmp(tb, "cluster") && strcmp(tb, "scope_data") && strcmp(tb, "scope_audio") &&
+                strcmp(tb, "scope_img") && strcmp(tb, "spectrum") && strcmp(tb, "talker"))
+                cqham_log("WS <- %.160s", (const char *)payload);
         }
         if (op == CQHAM_WS_TEXT && payload) {
             handle_text((const char *)payload);
