@@ -349,7 +349,8 @@ static void apply_play(int variant) {
             audio_set_play_mode(AUDIO_PLAY_VOICE_REC);
             break;
         case 8:
-            audio_set_play_mode(AUDIO_PLAY_ON);   /* hand mic 0: rec_set() opens it */
+            audio_set_play_mode(AUDIO_PLAY_ON);
+            x6100_control_hmic_set(param_i_get(cfg.hmic()));   /* the base keys only with it */
             break;
         case 4:
         case 7:
@@ -405,7 +406,7 @@ static void apply_mode(base_mode_t m) {
 }
 
 /* AUTO PTT (variant 8): the voice-record flag, see the list above */
-#define PROBE_PERIOD  900
+#define PROBE_PERIOD  700
 #define PROBE_MS      110
 #define TX_TAIL_MS    300
 static int      rec_state = -1;     /* -1 unknown, 0 off, 1 on */
@@ -418,13 +419,7 @@ static bool     probe_logged;
  * listens to the mic PTT: hand mic gain back, for my voice to CQHAM. */
 static void rec_set(bool on) {
     if (rec_state == (int)on) return;
-    if (on) {
-        x6100_control_hmic_set(0);
-        x6100_control_record_set(true);
-    } else {
-        x6100_control_record_set(false);
-        x6100_control_hmic_set(param_i_get(cfg.hmic()));
-    }
+    x6100_control_record_set(on);
     rec_state = on;
 }
 
@@ -469,14 +464,10 @@ static bool auto_ptt_step(bool tx, bool busy) {
 static bool moni_muted;
 
 static void moni_follow(void) {
-    bool base_tx = radio_get_state() == RADIO_TX;
-    if (base_tx && !moni_muted) {
+    if (!moni_muted) {
         x6100_control_moni_set(0);
         moni_muted = true;
-        cqham_log("AUDIO monitor de TX a 0 (no oirme)");
-    } else if (!base_tx && moni_muted) {
-        x6100_control_moni_set(param_i_get(cfg.moni()));
-        moni_muted = false;
+        cqham_log("AUDIO monitor a 0 mientras CQHAM esta abierto");
     }
 }
 
