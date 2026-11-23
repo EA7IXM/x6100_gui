@@ -41,3 +41,10 @@ bool        cqham_audio_mic_ptt_blind(void);
 /* PRUEBA MIC (variant 11): the hand mic as the program hears it while the
  * base plays, every 100 ms (also in /mnt/mic_ptt.log) */
 void        cqham_audio_mic_stats(float *rms, float *peak, float *dc);
+
+/* Output of CQHAM's sound: 0 the radio's speaker (through the base, which
+ * then ignores the hand mic PTT), 1 an external Bluetooth / USB sink (the
+ * base never plays: the hand mic PTT always works). */
+void        cqham_audio_set_output(int ext);
+void        cqham_audio_output_poll(bool now);     /* looks for the sink, every 3 s */
+int         cqham_audio_output(char *name, size_t n);   /* 0 radio, 1 external, 2 external wanted, none found */
