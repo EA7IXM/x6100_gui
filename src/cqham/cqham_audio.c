@@ -487,8 +487,22 @@ static bool auto_ptt_step(bool tx, bool busy) {
          * ignores the mic PTT while anything plays: BUSCAR PTT, 13:27). */
         static float   nf = 0.05f;          /* the remote's noise floor */
         static int64_t sig_until;
-        if (mix_rms < nf) nf = nf * 0.90f + mix_rms * 0.10f;
-        else              nf = nf * 0.998f + mix_rms * 0.002f;
+        /* the floor learns from the noise only, never from a station */
+        if (tx_tail_until + 400 > now) {
+            /* just after my over: keep the floor */
+        } else if (mix_rms < nf) {
+            nf = nf * 0.90f + mix_rms * 0.10f;
+        } else if (mix_rms < nf * 1.8f) {
+            nf = nf * 0.995f + mix_rms * 0.005f;
+        }
+        {
+            static int64_t sq_log;
+            if (now - sq_log > 2000) {
+                sq_log = now;
+                cqham_log("SQL remoto: nivel %.3f ruido %.3f -> %s", mix_rms, nf,
+                          now < sig_until ? "ABIERTO" : "cerrado");
+            }
+        }
         if (mix_rms > nf * 2.5f && mix_rms > 0.03f) sig_until = now + 900;   /* hang time */
         want = now < sig_until;
         probe_logged = false;
