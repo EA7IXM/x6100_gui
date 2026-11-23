@@ -818,6 +818,14 @@ static void net_sort(void) {
 }
 
 static void net_render(void) {
+    {
+        /* RED (n): the count follows the network even with the list closed */
+        static int shown_n = -1;
+        if (s.net_n != shown_n && b_net.disp_btn) {
+            shown_n = s.net_n;
+            buttons_refresh(&b_net);
+        }
+    }
     if (!net_open) return;
     if (s.net_seq == net_seen_seq && net_sel == net_seen_sel && net_top == net_seen_top) return;
     net_seen_seq = s.net_seq;
