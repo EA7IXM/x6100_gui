@@ -349,8 +349,7 @@ static void apply_play(int variant) {
             audio_set_play_mode(AUDIO_PLAY_VOICE_REC);
             break;
         case 8:
-            audio_set_play_mode(AUDIO_PLAY_ON);
-            x6100_control_hmic_set(param_i_get(cfg.hmic()));
+            audio_set_play_mode(AUDIO_PLAY_ON);   /* hand mic 0: rec_set() opens it */
             break;
         case 4:
         case 7:
@@ -406,7 +405,7 @@ static void apply_mode(base_mode_t m) {
 }
 
 /* AUTO PTT (variant 8): the voice-record flag, see the list above */
-#define PROBE_PERIOD  700
+#define PROBE_PERIOD  900
 #define PROBE_MS      110
 #define TX_TAIL_MS    300
 static int      rec_state = -1;     /* -1 unknown, 0 off, 1 on */
@@ -414,9 +413,18 @@ static int64_t  tx_tail_until;
 static int64_t  probe_t0;
 static bool     probe_logged;
 
+/* flag on = CQHAM on the speaker: hand mic gain 0 then, or the base sends
+ * the mic to the speaker (the monitor-like howl of v7). Flag off = the base
+ * listens to the mic PTT: hand mic gain back, for my voice to CQHAM. */
 static void rec_set(bool on) {
     if (rec_state == (int)on) return;
-    x6100_control_record_set(on);
+    if (on) {
+        x6100_control_hmic_set(0);
+        x6100_control_record_set(true);
+    } else {
+        x6100_control_record_set(false);
+        x6100_control_hmic_set(param_i_get(cfg.hmic()));
+    }
     rec_state = on;
 }
 
@@ -458,6 +466,20 @@ static bool auto_ptt_step(bool tx, bool busy) {
     return want;
 }
 
+static bool moni_muted;
+
+static void moni_follow(void) {
+    bool base_tx = radio_get_state() == RADIO_TX;
+    if (base_tx && !moni_muted) {
+        x6100_control_moni_set(0);
+        moni_muted = true;
+        cqham_log("AUDIO monitor de TX a 0 (no oirme)");
+    } else if (!base_tx && moni_muted) {
+        x6100_control_moni_set(param_i_get(cfg.moni()));
+        moni_muted = false;
+    }
+}
+
 static void *play_fn(void *arg) {
     (void)arg;
     pthread_setname_np(pthread_self(), "cqham-play");
@@ -474,6 +496,7 @@ static void *play_fn(void *arg) {
         bool        busy = now_ms() - atomic_load(&last_rx_ms) < PLAY_HOLD_MS;
         int         var   = atomic_load(&listen_variant);
         bool        autom = var == 0;
+        moni_follow();
         bool        audible = true;
         if (var == 8 && mic_ptt_armed) {
             audible = auto_ptt_step(tx, busy);
@@ -670,6 +693,10 @@ void cqham_audio_stop(void) {
         player = NULL;
     }
     pttmode_restore();
+    if (moni_muted) {
+        x6100_control_moni_set(param_i_get(cfg.moni()));
+        moni_muted = false;
+    }
     audio_set_play_mode(AUDIO_PLAY_OFF);
     x6100_control_rxvol_set(param_i_get(cfg.volume()));   /* the speaker as it was */
     mode_applied = MODE_NONE;
