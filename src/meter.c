@@ -268,8 +268,7 @@ void meter_tall(int extra) {
         FILE *f = fopen("/tmp/meter_tall.txt", "a");
         if (f) {
             lv_obj_t *pp = lv_obj_get_parent(obj);
-            fprintf(f, "extra=%d obj y=%d h=%d content_h=%d parent h=%d flags=%x
-", extra, (int)lv_obj_get_y(obj),
+            fprintf(f, "extra=%d obj y=%d h=%d content_h=%d parent h=%d maxh=%x\n", extra, (int)lv_obj_get_y(obj),
                     (int)lv_obj_get_height(obj), (int)lv_obj_get_content_height(obj), (int)lv_obj_get_height(pp),
                     (unsigned)lv_obj_get_style_max_height(obj, 0));
             fclose(f);
