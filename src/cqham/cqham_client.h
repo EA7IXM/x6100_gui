@@ -133,7 +133,6 @@ typedef struct {
     int     volume;         /* 0..100 */
     int     ptt_micro;      /* hand mic PTT: 0 off, 1 CW (no carrier), 2 voice */
     int     audio_variant;  /* listening-mode test variant (cqham_audio.c) */
-    int     out_ext;        /* CQHAM's sound: 0 radio speaker, 1 Bluetooth / USB */
 } cqham_config_t;
 
 /* Settings file on the DATA partition (editable on a PC). */
@@ -157,7 +156,6 @@ void cqham_client_set_step(int hz);
 void cqham_client_set_mic_gain(int g);
 void cqham_client_set_volume(int v);
 void cqham_client_set_audio_variant(int v);
-void cqham_client_set_output(int ext);
 void cqham_client_ptt(bool on);
 
 /* Remote stations */

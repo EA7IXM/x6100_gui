@@ -533,81 +533,6 @@ static bool auto_ptt_step(bool tx, bool busy) {
     return want;
 }
 
-/***** External output (Bluetooth / USB) *****/
-
-static atomic_int      out_want;
-static atomic_int      ext_gen;
-static pthread_mutex_t ext_lock = PTHREAD_MUTEX_INITIALIZER;
-static char            ext_dev[160];
-static audio_player_t *ext_player;
-static atomic_int      ext_on;           /* the external player is playing */
-
-void cqham_audio_output_poll(bool now) {
-    static int64_t last;
-    int64_t        t = now_ms();
-    if (!now && t - last < 3000) return;
-    last = t;
-
-    char found[160] = "";
-    if (atomic_load(&out_want)) {
-        FILE *p = popen("pactl list short sinks 2>/dev/null", "r");
-        if (p) {
-            char line[256];
-            while (fgets(line, sizeof(line), p)) {
-                char name[160];
-                if (sscanf(line, "%*s %159s", name) != 1) continue;
-                if (strstr(name, "bluez") || strstr(name, ".usb-")) {
-                    snprintf(found, sizeof(found), "%s", name);
-                    if (strstr(name, "bluez")) break;    /* Bluetooth first */
-                }
-            }
-            pclose(p);
-        }
-    }
-    pthread_mutex_lock(&ext_lock);
-    if (strcmp(found, ext_dev)) {
-        snprintf(ext_dev, sizeof(ext_dev), "%s", found);
-        atomic_fetch_add(&ext_gen, 1);
-        cqham_log("SALIDA: %s", found[0] ? found : "altavoz de la radio");
-    }
-    pthread_mutex_unlock(&ext_lock);
-}
-
-void cqham_audio_set_output(int ext) {
-    atomic_store(&out_want, ext ? 1 : 0);
-    cqham_audio_output_poll(true);
-}
-
-int cqham_audio_output(char *name, size_t n) {
-    if (!atomic_load(&out_want)) return 0;
-    pthread_mutex_lock(&ext_lock);
-    if (name && n) snprintf(name, n, "%s", strstr(ext_dev, "bluez") ? "Bluetooth" : (ext_dev[0] ? "USB" : ""));
-    pthread_mutex_unlock(&ext_lock);
-    return atomic_load(&ext_on) ? 1 : 2;
-}
-
-/* the play thread: (re)open the external player when the sink changes */
-static void ext_follow(void) {
-    static int gen = -1;
-    int        g   = atomic_load(&ext_gen);
-    if (g == gen) return;
-    gen = g;
-    if (ext_player) {
-        audio_player_release(ext_player);
-        ext_player = NULL;
-    }
-    char dev[160];
-    pthread_mutex_lock(&ext_lock);
-    snprintf(dev, sizeof(dev), "%s", ext_dev);
-    pthread_mutex_unlock(&ext_lock);
-    if (dev[0]) {
-        ext_player = audio_create_player_on(dev, RATE, 1);
-        cqham_log("SALIDA externa %s: %s", dev, ext_player ? "abierta" : "FALLO");
-    }
-    atomic_store(&ext_on, ext_player != NULL);
-    mode_applied = MODE_NONE;   /* base mode set again for the new output */
-}
-
 static bool moni_muted;
 
 /* The monitor level is also what reaches the capture stream while the base
@@ -626,10 +551,9 @@ static void moni_follow(void) {
         x6100_control_moni_set(param_i_get(cfg.moni()));
         cqham_log("AUDIO TX: monitor %d hacia CQHAM, altavoz a 0", param_i_get(cfg.moni()));
     } else {
-        int vol = atomic_load(&ext_on) ? 0 : param_i_get(cfg.volume());
         x6100_control_moni_set(0);
-        x6100_control_rxvol_set(vol);
-        cqham_log("AUDIO RX: monitor a 0, altavoz %d", vol);
+        x6100_control_rxvol_set(param_i_get(cfg.volume()));
+        cqham_log("AUDIO RX: monitor a 0, altavoz %d", param_i_get(cfg.volume()));
     }
 }
 
@@ -708,36 +632,13 @@ static void *play_fn(void *arg) {
         bool        autom = var == 0;
         moni_follow();
         bool        audible = true;
-        ext_follow();
-        bool ext = ext_player != NULL;
-        if (ext) {
-            /* CQHAM's sound goes out by Bluetooth / USB: the base never
-             * plays, so it always sees the hand mic PTT (as TX DIRECTO). A
-             * PTT from the key / F1 / screen takes the mic by voice-record. */
-            bool base_tx = radio_get_state() == RADIO_TX;
-            if (tx && !base_tx) {
-                if (mode_applied != MODE_REC) rec_state = -1;
-                apply_mode(MODE_REC);
-            } else {
-                if (mode_applied != MODE_PLAY) {
-                    rec_state = -1;
-                    apply_mode(MODE_PLAY);
-                    x6100_control_hmic_set(param_i_get(cfg.hmic()));
-                    x6100_control_rxvol_set(0);      /* the radio's speaker silent */
-                    moni_tx = -1;
-                }
-                rec_set(false);
-            }
-        }
-        if (!ext && var != 10 && scan_step >= 0 && scan_step < SCAN_STEPS) {
+        if (var != 10 && scan_step >= 0 && scan_step < SCAN_STEPS) {
             x6100_control_cmd(x6100_micsel_pttmode_chge_spmode_auxiqgen_sqlthr, scan_reg_saved);
             x6100_control_modem_set(false);
             scan_step = SCAN_STEPS;
             cqham_log("BUSCAR PTT: cortado, registro restaurado");
         }
-        if (ext) {
-            audible = !tx;
-        } else if (var == 10) {
+        if (var == 10) {
             if (mode_applied != MODE_PLAY) { apply_mode(MODE_PLAY); scan_step = -1; }
             scan_run();
             audible = !tx;
@@ -784,9 +685,7 @@ static void *play_fn(void *arg) {
             if (rxf) cqham_log("AUDIO RX %d tramas en 15 s, nivel %.2f", rxf, lvl);
         }
 
-        if (ext) {
-            if (audio_player_send(ext_player, out, FRAME) < 0) usleep(20000);
-        } else if (player) {
+        if (player) {
             audio_player_send(player, out, FRAME);   /* blocks: paces the loop */
         } else {
             usleep(20000);
@@ -970,12 +869,6 @@ void cqham_audio_stop(void) {
         x6100_control_modem_set(false);
     }
     scan_step = -1;
-    if (ext_player) {
-        audio_player_release(ext_player);
-        ext_player = NULL;
-    }
-    atomic_store(&ext_on, 0);
-    atomic_fetch_add(&ext_gen, 1);
     pttmode_restore();
     if (moni_muted) {
         x6100_control_moni_set(param_i_get(cfg.moni()));
