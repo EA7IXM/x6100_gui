@@ -261,9 +261,9 @@ static volatile bool meter_ext;
 void meter_tall(int extra) {
     if (!obj) return;
     lv_obj_set_height(obj, TOP_BLOCK_SMALL_HEIGHT + extra);
-    lv_obj_set_style_translate_y(obj, extra / 2, 0);   /* the flex row centres it: keep the top */
+    /* the top stays where it was: it grows down into the room the CQHAM window left */
     lv_obj_update_layout(obj);
-    meter_needle_relayout(extra ? 8 : 0);
+    meter_needle_relayout(extra ? 14 : 0);   /* numbers clear of the top edge */
     {   /* EA7IXM: what the layout really gave (debug of the taller meter) */
         FILE *f = fopen("/tmp/meter_tall.txt", "a");
         if (f) {
