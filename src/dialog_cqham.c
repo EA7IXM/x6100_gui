@@ -916,10 +916,13 @@ static void net_create(lv_obj_t *lcd, lv_coord_t x, lv_coord_t y) {
     static const lv_coord_t cx[5] = {4, 40, 140, 196, 316};
     static const lv_coord_t cw[5] = {36, 100, 56, 120, 96};
     for (int c = 0; c < 5; c++) {
-        net_col[c] = mk_label(net_box, &sony_16, c == 1 ? 0xeafaff : 0xa8c4da, cx[c], 22, cw[c],
+        /* rows exactly NET_ROW_H apart, centred in the selection bar (the font's
+         * line height is not 16: the bar drifted one row off) */
+        net_col[c] = mk_label(net_box, &sony_16, c == 1 ? 0xeafaff : 0xa8c4da, cx[c],
+                              22 + (NET_ROW_H - lv_font_get_line_height(&sony_16)) / 2, cw[c],
                               LV_TEXT_ALIGN_LEFT, "");
         lv_label_set_recolor(net_col[c], true);
-        lv_obj_set_style_text_line_space(net_col[c], NET_ROW_H - 16, 0);
+        lv_obj_set_style_text_line_space(net_col[c], NET_ROW_H - lv_font_get_line_height(&sony_16), 0);
         lv_obj_set_height(net_col[c], NET_ROWS * NET_ROW_H);
     }
     lv_obj_add_flag(net_box, LV_OBJ_FLAG_HIDDEN);
