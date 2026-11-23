@@ -1075,6 +1075,18 @@ static bool radio_tick() {
                 diag_ptt_log("FLAGS raw 0x%08x (tx=%d)", (unsigned)flags, (int)pack->flag.tx);
                 last_flags = flags;
             }
+            /* any other field that moves on the mic PTT while the base is
+             * NOT keyed (CQHAM playing): a PTT sign with no audio cut */
+            if (!pack->flag.tx) {
+                static int last_p = -1, last_a = -1, last_v = -1, last_r = -1;
+                if (pack->tx_power != last_p || pack->alc_level != last_a ||
+                    pack->vswr != last_v || pack->reserved_1 != last_r) {
+                    diag_ptt_log("RX fields pwr=%d alc=%d swr=%d res1=%d", pack->tx_power,
+                                 pack->alc_level, pack->vswr, pack->reserved_1);
+                    last_p = pack->tx_power; last_a = pack->alc_level;
+                    last_v = pack->vswr;     last_r = pack->reserved_1;
+                }
+            }
         }
 
         hkey_put(pack->hkey);

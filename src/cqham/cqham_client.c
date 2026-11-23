@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <strings.h>
 #include <unistd.h>
 
 #include <jpeglib.h>    /* after stdio.h: it uses FILE */
@@ -53,10 +54,22 @@ static out_item_t      *out_head, *out_tail;
 static size_t           out_bytes;
 static int              out_items;
 
+/* REMOTO OFF while I hold the remote: the server keeps me as its holder for
+ * 30 s more (protocol 7.3, no release message) and keys the remote with my
+ * PTT meanwhile. The radio stays where I tune, and the PTT waits. */
+static int64_t leave_until;
+
+static int64_t now_ms(void);
+static bool i_hold(void);
+
 static int64_t now_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+static bool i_hold(void) {
+    return st.holder[0] && (!strcasecmp(st.holder, st.callsign) || !strcasecmp(st.holder, st.dispcall));
 }
 
 /***** Diagnostic log (DATA partition, readable on a PC) *****/
@@ -676,6 +689,7 @@ static void handle_text(const char *txt) {
         if (x) notice_l(false, "%s", x);
     } else if (!strcmp(t, "qsy_ctrl_holder") || !strcmp(t, "qsy11")) {
         copy_call(st.holder, jstr(m, "holder"));
+        if (!i_hold()) leave_until = 0;
     } else if (!strcmp(t, "scope_denied")) {
         st.scope_on = false;
         notice_l(true, "Scope remoto: necesitas licencia");
@@ -733,7 +747,12 @@ static void handle_text(const char *txt) {
             pthread_mutex_lock(&lock);
         }
     } else if (!strcmp(t, "hf_qsy_ack") || !strcmp(t, "qsy_ack")) {
-        if (jtrue(m, "ok") || jtrue(m, "seguir")) {
+        cqham_log("REMOTO hf_qsy_ack ok=%d seguir=%d freq=%.4f remoto=%d titular=%s", jtrue(m, "ok"),
+                  jtrue(m, "seguir"), jnum(m, "freq", 0), st.remote, st.holder);
+        if (jtrue(m, "seguir") && !st.remote) {
+            resend_tune = true;            /* I left the remote: stay where I am */
+            if (i_hold() && leave_until == 0) leave_until = now_ms() + 31000;
+        } else if (jtrue(m, "ok") || jtrue(m, "seguir")) {
             /* always follow (protocol 7.3): the server keeps the holder on
              * the remote for 30 s after leaving it, and keys the remote with
              * my PTT meanwhile; not following showed one frequency and
@@ -766,6 +785,7 @@ static void handle_text(const char *txt) {
     } else if (!strcmp(t, "qsy_ctrl_blocked")) {
         notice_l(true, "Bloqueado: el titular te denego el control");
     } else if (!strcmp(t, "qsy_ctrl_lost")) {
+        leave_until = 0;
         notice_l(true, "Has perdido el control del remoto");
     } else if (!strcmp(t, "qsy_ctrl_available")) {
         notice_l(false, "El remoto vuelve a estar libre");
@@ -774,12 +794,13 @@ static void handle_text(const char *txt) {
         const char *x = jstr(m, "texto");
         if (x) notice_l(false, "%s", x);
     } else if (!strcmp(t, "link_home")) {
+        cqham_log("REMOTO link_home freq=%.4f remoto=%d", jnum(m, "freq", 0), st.remote);
         double f = jnum(m, "freq", 0);
-        if (f > 0) {
+        if (f > 0 && st.remote) {
             st.freq  = (int64_t)llround(f * 1e6);
             cfg.freq = st.freq;
-            resend_tune = true;
         }
+        resend_tune = true;
     }
 
     if (stop_tx) {
@@ -1112,6 +1133,11 @@ void cqham_client_ptt(bool on) {
         pthread_mutex_unlock(&lock);
         return;
     }
+    if (on && leave_until > now_ms()) {
+        notice_l(true, "Soltando el remoto: PTT en %d s", (int)((leave_until - now_ms()) / 1000) + 1);
+        pthread_mutex_unlock(&lock);
+        return;
+    }
     if (on == st.ptt) {
         pthread_mutex_unlock(&lock);
         return;
@@ -1130,6 +1156,11 @@ void cqham_client_ptt(bool on) {
 
 void cqham_client_remote(bool on) {
     pthread_mutex_lock(&lock);
+    if (!on && st.remote && i_hold()) {
+        leave_until = now_ms() + 31000;
+        notice_l(false, "Remoto soltado: PTT libre en 30 s");
+    }
+    if (on) leave_until = 0;
     st.remote = on;
     if (!on) {
         st.scope_on = false;
