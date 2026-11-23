@@ -32,11 +32,13 @@
 #include "spectrum.h"
 #include "styles.h"
 #include "textarea_window.h"
+#include "tx_info.h"
 #include "voice.h"
 #include "waterfall.h"
 #include "cfg/cfg_api.h"
 
 #include <aether_radio/x6100_control/control.h>
+#include <aether_radio/x6100_control/low/control.h>
 
 #include <math.h>
 #include <stdio.h>
@@ -111,6 +113,7 @@ static int64_t    rq_freq;
 static int64_t    rq_last_ms;
 static bool       ptt_by_mic;       /* the hand mic PTT keyed the base */
 static bool       ptt_by_key;
+static uint32_t   bias_saved = (650u << 16) | 450u;   /* the radio's defaults */
 static x6100_vfo_t radio_vfo;
 
 /* soft buttons refreshed by the network list (defined further down) */
@@ -953,6 +956,7 @@ static void timer_cb(lv_timer_t *t) {
     tick_n++;
 
     base_ptt_poll();
+    tx_info_cqham_mic(cqham_audio_mic_level(), conf.mic_gain);
     cqham_audio_output_poll(false);
 
     float prev = s_meter;
@@ -1660,6 +1664,15 @@ static void construct_cb(lv_obj_t *parent) {
         x6100_control_vfo_mode_set(radio_vfo, x6100_mode_cw);
     }
     x6100_control_txpwr_set(conf.ptt_micro ? 0.1f : 0.0f);
+    /* No RF at all: the hand mic PTT still keys the base (that is how it is
+     * seen), but with the PA driver and final unbiased nothing goes out.
+     * Put back exactly as it was on close (and the radio sets its defaults
+     * again at every start). */
+    bias_saved = x6100_control_get(x6100_biasdrive_biasfinal);
+    x6100_control_bias_drive_set(0);
+    x6100_control_bias_final_set(0);
+    cqham_log("SIN RF: polarizacion del PA a 0 (antes 0x%08x)", (unsigned)bias_saved);
+    tx_info_cqham(true);
     cqham_log("VENTANA abierta: ptt_micro=%d (radio %s, %.1f W)", conf.ptt_micro,
               conf.ptt_micro ? "en CW" : "en su modo", conf.ptt_micro ? 0.1 : 0.0);
 
@@ -1728,6 +1741,10 @@ static void destruct_cb(void) {
         x6100_control_vfo_mode_set(radio_vfo, (x6100_mode_t)cparam_i_get(cfg.cur.mode()));
     }
     x6100_control_txpwr_set(param_f_get(cfg.pwr()));
+    x6100_control_bias_drive_set((uint16_t)(bias_saved & 0xFFFF));
+    x6100_control_bias_final_set((uint16_t)(bias_saved >> 16));
+    cqham_log("RF normal: polarizacion del PA restaurada 0x%08x", (unsigned)bias_saved);
+    tx_info_cqham(false);
     meter_external(false);
     net_open = false;
     cqham_log("VENTANA cerrada");

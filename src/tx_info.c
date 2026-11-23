@@ -40,6 +40,10 @@ static bool dialog_run = false;
 
 static lv_obj_t     *obj;
 static lv_obj_t     *pwr_label;
+static lv_obj_t     *pwr_name;      /* "PWR", or "MIC" with CQHAM open */
+static bool          cq_on;
+static float         cq_mic;
+static int           cq_gain;
 static lv_obj_t     *vswr_label;
 static lv_obj_t     *alc_label;
 
@@ -163,7 +167,8 @@ static void update_tx_info(void *arg) {
 static void update_labels_cb(lv_timer_t *t) {
     lv_label_set_text_fmt(alc_label, "%.1f", alc);
     lv_label_set_text_fmt(vswr_label, "%.2f", vswr);
-    lv_label_set_text_fmt(pwr_label, "%.1f W", pwr);
+    if (cq_on) lv_label_set_text_fmt(pwr_label, "%d", cq_gain);
+    else lv_label_set_text_fmt(pwr_label, "%.1f W", pwr);
 }
 
 static void on_dialog_start(void *s, lv_msg_t *msg) {
@@ -262,7 +267,7 @@ lv_obj_t *tx_info_init(lv_obj_t *parent) {
     /* SWR and ALC numbers as big as the power (sony_16 was too small to
      * read on the radio), the names sony_22, each on its number's base
      * line (sony_22 and sony_26 lines put it 15 and 16 px down) */
-    add_label(0, 10, 48, &sony_22, LV_TEXT_ALIGN_LEFT, "PWR");
+    pwr_name = add_label(0, 10, 48, &sony_22, LV_TEXT_ALIGN_LEFT, cq_on ? "MIC" : "PWR");
     add_label(0, 40, 48, &sony_22, LV_TEXT_ALIGN_LEFT, "SWR");
     add_label(326, 40, 48, &sony_22, LV_TEXT_ALIGN_LEFT, "ALC");
     pwr_label  = add_label(535, 9, 85, &sony_26, LV_TEXT_ALIGN_RIGHT, "");
@@ -283,8 +288,20 @@ lv_obj_t *tx_info_init(lv_obj_t *parent) {
     return obj;
 }
 
+void tx_info_cqham(bool on) {
+    cq_on = on;
+    if (pwr_name) lv_label_set_text(pwr_name, on ? "MIC" : "PWR");
+}
+
+void tx_info_cqham_mic(float level, int gain) {
+    cq_mic  = level;
+    cq_gain = gain;
+}
+
 void tx_info_update(float p, float s, float a) {
     const float beta = 0.9f;
+
+    if (cq_on) p = min_pwr + LV_CLAMP(0.0f, cq_mic, 1.0f) * (max_pwr - min_pwr);   /* the mic level */
 
     a = 10.f - a;
     s = LV_MIN(max_swr, s);
