@@ -1113,6 +1113,7 @@ void cqham_client_set_power(int watts) {
     pthread_mutex_lock(&lock);
     st.power  = watts;
     cfg.power = watts;
+    cqham_config_save(&cfg);         /* kept for the next start */
     pthread_mutex_unlock(&lock);
     cJSON *o = cJSON_CreateObject();
     cJSON_AddStringToObject(o, "t", "power");
@@ -1123,12 +1124,14 @@ void cqham_client_set_power(int watts) {
 void cqham_client_set_step(int hz) {
     pthread_mutex_lock(&lock);
     cfg.step = hz;
+    cqham_config_save(&cfg);         /* kept for the next start */
     pthread_mutex_unlock(&lock);
 }
 
 void cqham_client_set_mic_gain(int g) {
     pthread_mutex_lock(&lock);
     cfg.mic_gain = g < 0 ? 0 : (g > 100 ? 100 : g);
+    cqham_config_save(&cfg);         /* kept for the next start */
     pthread_mutex_unlock(&lock);
 }
 
@@ -1149,6 +1152,7 @@ void cqham_client_set_audio_variant(int v) {
 void cqham_client_set_volume(int v) {
     pthread_mutex_lock(&lock);
     cfg.volume = v < 0 ? 0 : (v > 100 ? 100 : v);
+    cqham_config_save(&cfg);         /* kept for the next start */
     pthread_mutex_unlock(&lock);
 }
 
