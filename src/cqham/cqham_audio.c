@@ -566,6 +566,11 @@ void cqham_audio_output_poll(bool now) {
             pclose(p);
         }
     }
+    static int misses;
+    if (!found[0] && ext_dev[0] && atomic_load(&out_want)) {
+        if (++misses < 3) return;      /* gone only if missing 3 times (~9 s) */
+    }
+    misses = 0;
     pthread_mutex_lock(&ext_lock);
     if (strcmp(found, ext_dev)) {
         snprintf(ext_dev, sizeof(ext_dev), "%s", found);
@@ -597,6 +602,7 @@ static void ext_follow(void) {
     if (ext_player) {
         audio_player_release(ext_player);
         ext_player = NULL;
+        cqham_log("SALIDA externa cerrada");
     }
     char dev[160];
     pthread_mutex_lock(&ext_lock);

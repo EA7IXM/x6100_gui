@@ -325,6 +325,9 @@ void audio_player_release(audio_player_t *player) {
 
     if (player == &default_player) return;
 
+    /* EA7IXM: under the mainloop lock, as every other call on the stream
+     * (without it the CQHAM play thread hung when its USB output closed) */
+    pa_threaded_mainloop_lock(mloop);
     pa_stream_disconnect(player->stream);
 
     pa_stream_set_write_callback(player->stream, NULL, NULL);
@@ -332,6 +335,7 @@ void audio_player_release(audio_player_t *player) {
     pa_stream_set_state_callback(player->stream, NULL, NULL);
 
     pa_stream_unref(player->stream);
+    pa_threaded_mainloop_unlock(mloop);
 
     free(player);
 }
