@@ -308,6 +308,7 @@ void radio_start() {
     subject_subscribe_and_notify((Subject*)cfg.mic(), on_change_uint8, x6100_control_mic_set);
     subject_subscribe_and_notify((Subject*)cfg.hmic(), on_change_uint8, x6100_control_hmic_set);
     subject_subscribe_and_notify((Subject*)cfg.imic(), on_change_uint8, x6100_control_imic_set);
+    param_i_set(cfg.moni(), 0);   /* EA7IXM: never hear myself on the speaker in radio mode */
     subject_subscribe_and_notify((Subject*)cfg.moni(), on_change_uint8, x6100_control_moni_set);
 
     subject_subscribe_and_notify((Subject*)cfg.rit(), base_control_command, (void*)x6100_rit);

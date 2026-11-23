@@ -623,6 +623,7 @@ static bool moni_muted;
  * while listening (no howl), the user's monitor while the base is in TX
  * (my voice to CQHAM) with the speaker volume 0 (I don't hear myself). */
 static int moni_tx = -1;   /* -1 unknown, 0 listening, 1 base in TX */
+#define CQ_MONI 30         /* EA7IXM: CQHAM's own level (the radio's MONI is 0: no self-hearing) */
 
 static void moni_follow(void) {
     int base_tx = radio_get_state() == RADIO_TX;
@@ -631,8 +632,8 @@ static void moni_follow(void) {
     moni_muted = true;
     if (base_tx) {
         x6100_control_rxvol_set(0);
-        x6100_control_moni_set(param_i_get(cfg.moni()));
-        cqham_log("AUDIO TX: monitor %d hacia CQHAM, altavoz a 0", param_i_get(cfg.moni()));
+        x6100_control_moni_set(CQ_MONI);
+        cqham_log("AUDIO TX: monitor %d hacia CQHAM, altavoz a 0", CQ_MONI);
     } else {
         int vol = atomic_load(&ext_on) ? 0 : param_i_get(cfg.volume());
         x6100_control_moni_set(0);
