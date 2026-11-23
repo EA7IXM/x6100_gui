@@ -481,10 +481,16 @@ static bool auto_ptt_step(bool tx, bool busy) {
         want = true;
         probe_logged = false;
     } else if (now - atomic_load(&last_remote_ms) < 500 && atomic_load(&listen_variant) == 9) {
-        /* REMOTO FLUIDO: never cut the remote's audio; over it the mic PTT
-         * is not seen (the base gives no sign of it while playing): F1,
-         * the front PTT key or the screen's PTT key it at once */
-        want = true;
+        /* REMOTO FLUIDO = a squelch on the remote's receiver. A station on
+         * it: played whole, never cut. Only its noise: muted, and the base
+         * is left listening to the mic PTT, which keys at once (the base
+         * ignores the mic PTT while anything plays: BUSCAR PTT, 13:27). */
+        static float   nf = 0.05f;          /* the remote's noise floor */
+        static int64_t sig_until;
+        if (mix_rms < nf) nf = nf * 0.90f + mix_rms * 0.10f;
+        else              nf = nf * 0.998f + mix_rms * 0.002f;
+        if (mix_rms > nf * 2.5f && mix_rms > 0.03f) sig_until = now + 900;   /* hang time */
+        want = now < sig_until;
         probe_logged = false;
     } else if (now - atomic_load(&last_remote_ms) < 500) {
         /* a remote's receiver, endless: peek in a pause of its audio, or

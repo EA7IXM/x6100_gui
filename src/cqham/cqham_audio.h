@@ -30,7 +30,7 @@ float cqham_audio_mic_level(void);   /* 0..1, for the MIC bar */
 
 /* Listening-mode test variants (see cqham_audio.c) */
 #define CQHAM_AUDIO_VARIANTS 11
-#define CQHAM_AUDIO_DEFAULT  8   /* AUTO PTT */
+#define CQHAM_AUDIO_DEFAULT  9   /* REMOTO FLUIDO (squelch) */
 void        cqham_audio_set_variant(int v);
 int         cqham_audio_get_variant(void);
 const char *cqham_audio_variant_name(int v);
