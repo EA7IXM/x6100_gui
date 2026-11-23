@@ -1177,15 +1177,17 @@ static void btn_goto_cb(button_data_t *d);
 static const char *net_label(void);
 static const char *goto_label(void);
 
-static buttons_page_t page4;
-static button_data_t b_p1     = {.type = BTN_TEXT, .label = "(CQHAM 1:4)", .press = button_next_page_cb,
-                                 .hold = button_prev_page_cb, .next = &page2, .prev = &page4};
-static button_data_t b_p2     = {.type = BTN_TEXT, .label = "(CQHAM 2:4)", .press = button_next_page_cb,
+static buttons_page_t page4, page5;
+static button_data_t b_p1     = {.type = BTN_TEXT, .label = "(CQHAM 1:5)", .press = button_next_page_cb,
+                                 .hold = button_prev_page_cb, .next = &page2, .prev = &page5};
+static button_data_t b_p2     = {.type = BTN_TEXT, .label = "(CQHAM 2:5)", .press = button_next_page_cb,
                                  .hold = button_prev_page_cb, .next = &page3, .prev = &page1};
-static button_data_t b_p3     = {.type = BTN_TEXT, .label = "(CQHAM 3:4)", .press = button_next_page_cb,
+static button_data_t b_p3     = {.type = BTN_TEXT, .label = "(CQHAM 3:5)", .press = button_next_page_cb,
                                  .hold = button_prev_page_cb, .next = &page4, .prev = &page2};
-static button_data_t b_p4     = {.type = BTN_TEXT, .label = "(CQHAM 4:4)", .press = button_next_page_cb,
-                                 .hold = button_prev_page_cb, .next = &page1, .prev = &page3};
+static button_data_t b_p4     = {.type = BTN_TEXT, .label = "(CQHAM 4:5)", .press = button_next_page_cb,
+                                 .hold = button_prev_page_cb, .next = &page5, .prev = &page3};
+static button_data_t b_p5     = {.type = BTN_TEXT, .label = "(CQHAM 5:5)", .press = button_next_page_cb,
+                                 .hold = button_prev_page_cb, .next = &page1, .prev = &page4};
 static button_data_t b_net    = {.type = BTN_TEXT_FN, .label_fn = net_label, .press = btn_net_cb};
 static button_data_t b_goto   = {.type = BTN_TEXT_FN, .label_fn = goto_label, .press = btn_goto_cb};
 static button_data_t b_ptt    = {.type = BTN_TEXT_FN, .label_fn = ptt_label, .press = btn_ptt_cb};
@@ -1202,7 +1204,83 @@ static button_data_t b_grant  = {.type = BTN_TEXT, .label = "CEDER\nCONTROL", .p
 static button_data_t b_deny   = {.type = BTN_TEXT, .label = "NO\nCEDER", .press = btn_deny_cb};
 
 static buttons_page_t page1 = {{&b_p1, &b_ptt, &b_net, &b_goto, &b_exit}};
-static buttons_page_t page2 = {{&b_p2, &b_step, &b_pwr, &b_mic, &b_login}};
+/* BANDA: the remote's bands (hf_bands_list); each press picks the next one,
+ * and 1.5 s after the last press the remote goes there */
+static button_data_t b_rband;
+static int         rb_sel = -1;
+static lv_timer_t *rb_timer;
+
+static int rb_band_index(const char *name) {
+    for (int bi = 0; bi < cqham_bands_count(); bi++) {
+        if (!strcmp(cqham_band_at(bi)->name, name)) return bi;
+    }
+    return -1;
+}
+
+static const char *rband_label(void) {
+    static char b[24];
+    if (rb_sel >= 0 && rb_sel < s.link_bands_n) snprintf(b, sizeof(b), "BANDA\n> %s", s.link_bands[rb_sel]);
+    else if (s.remote && s.link[0] && band()) snprintf(b, sizeof(b), "BANDA\n%s", band()->name);
+    else snprintf(b, sizeof(b), "BANDA\nREMOTO");
+    return b;
+}
+
+static void rb_go_cb(lv_timer_t *t) {
+    (void)t;
+    rb_timer = NULL;
+    if (rb_sel < 0 || rb_sel >= s.link_bands_n) return;
+    int bi = rb_band_index(s.link_bands[rb_sel]);
+    if (bi >= 0) {
+        int64_t f = cqham_band_default_freq(bi);
+        rq_freq   = f;          /* the rate limiter sends the remote QSY */
+        s.freq    = f;
+        char msg[48];
+        snprintf(msg, sizeof(msg), "Remoto a %s", s.link_bands[rb_sel]);
+        show_notice(msg, false);
+        voice_say_text_fmt("%s", s.link_bands[rb_sel]);
+    } else {
+        show_notice("Banda del remoto desconocida", true);
+    }
+    rb_sel = -1;
+    buttons_refresh(&b_rband);
+}
+
+static void btn_rband_cb(button_data_t *d) {
+    if (!s.remote || !s.link[0]) {
+        show_notice("Ponte en un remoto con REMOTO ON (pag. 3)", true);
+        return;
+    }
+    if (s.link_bands_n == 0) {
+        cqham_client_remote_probe();
+        show_notice("Buscando las bandas del remoto...", false);
+        return;
+    }
+    if (rb_sel < 0) {
+        /* start from the band after the one the remote is on */
+        int k = -1;
+        for (int i = 0; i < s.link_bands_n; i++) {
+            if (band() && !strcmp(s.link_bands[i], band()->name)) k = i;
+        }
+        rb_sel = (k + 1) % s.link_bands_n;
+    } else {
+        rb_sel = (rb_sel + 1) % s.link_bands_n;
+    }
+    char msg[96] = "Bandas:";
+    for (int i = 0; i < s.link_bands_n; i++) {
+        char one[16];
+        snprintf(one, sizeof(one), i == rb_sel ? " [%s]" : " %s", s.link_bands[i]);
+        strncat(msg, one, sizeof(msg) - strlen(msg) - 1);
+    }
+    show_notice(msg, false);
+    if (rb_timer) lv_timer_del(rb_timer);
+    rb_timer = lv_timer_create(rb_go_cb, 1500, NULL);
+    lv_timer_set_repeat_count(rb_timer, 1);
+    buttons_refresh(d);
+}
+
+static button_data_t b_rband  = {.type = BTN_TEXT_FN, .label_fn = rband_label, .press = btn_rband_cb};
+static buttons_page_t page2 = {{&b_p2, &b_step, &b_pwr, &b_mic, &b_rband}};
+static buttons_page_t page5 = {{&b_p5, &b_login, NULL, NULL, NULL}};
 static buttons_page_t page3 = {{&b_p3, &b_room, &b_remote, &b_probe, &b_go}};
 static const char *audio_label(void) {
     static char b[24];
@@ -1586,6 +1664,11 @@ static void destruct_cb(void) {
     if (rate_timer) {
         lv_timer_del(rate_timer);
         rate_timer = NULL;
+    }
+    if (rb_timer) {
+        lv_timer_del(rb_timer);
+        rb_timer = NULL;
+        rb_sel   = -1;
     }
     if (tx_sub) {
         lv_msg_unsubscribe(tx_sub);
