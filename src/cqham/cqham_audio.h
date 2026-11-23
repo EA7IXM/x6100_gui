@@ -29,7 +29,7 @@ float cqham_audio_rx_level(void);    /* 0..1, for the S-meter */
 float cqham_audio_mic_level(void);   /* 0..1, for the MIC bar */
 
 /* Listening-mode test variants (see cqham_audio.c) */
-#define CQHAM_AUDIO_VARIANTS 11
+#define CQHAM_AUDIO_VARIANTS 12
 #define CQHAM_AUDIO_DEFAULT  9   /* REMOTO FLUIDO (squelch) */
 void        cqham_audio_set_variant(int v);
 int         cqham_audio_get_variant(void);
@@ -37,3 +37,7 @@ const char *cqham_audio_variant_name(int v);
 
 /* true while the base plays CQHAM and so ignores the hand mic PTT */
 bool        cqham_audio_mic_ptt_blind(void);
+
+/* PRUEBA MIC (variant 11): the hand mic as the program hears it while the
+ * base plays, every 100 ms (also in /mnt/mic_ptt.log) */
+void        cqham_audio_mic_stats(float *rms, float *peak, float *dc);

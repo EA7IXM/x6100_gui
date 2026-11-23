@@ -332,7 +332,7 @@ static uint32_t   pttmode_saved;
 static bool       pttmode_touched;
 
 const char *cqham_audio_variant_name(int v) {
-    static const char *n[CQHAM_AUDIO_VARIANTS] = {"AUTO", "PLAY", "PLAY+MIC", "REC", "SIN-REC", "PTTM 1", "PTTM 2", "TX DIRECTO", "AUTO PTT", "REMOTO FLUIDO", "BUSCAR PTT"};
+    static const char *n[CQHAM_AUDIO_VARIANTS] = {"AUTO", "PLAY", "PLAY+MIC", "REC", "SIN-REC", "PTTM 1", "PTTM 2", "TX DIRECTO", "AUTO PTT", "REMOTO FLUIDO", "BUSCAR PTT", "PRUEBA MIC"};
     return (v >= 0 && v < CQHAM_AUDIO_VARIANTS) ? n[v] : "?";
 }
 
@@ -358,6 +358,7 @@ static void apply_play(int variant) {
     if (variant != 5 && variant != 6) pttmode_restore();
     switch (variant) {
         case 2:
+        case 11:
             audio_set_play_mode(AUDIO_PLAY_ON);
             x6100_control_hmic_set(param_i_get(cfg.hmic()));
             break;
@@ -729,7 +730,55 @@ static void send_frame(void) {
     cqham_client_send_audio(frame, HDR + n);
 }
 
+static _Atomic float mt_rms, mt_peak, mt_dc;
+
+void cqham_audio_mic_stats(float *rms, float *peak, float *dc) {
+    if (rms) *rms = atomic_load(&mt_rms);
+    if (peak) *peak = atomic_load(&mt_peak);
+    if (dc) *dc = atomic_load(&mt_dc);
+}
+
+/* PRUEBA MIC: 100 ms windows of the raw capture while the base plays (it
+ * ignores the mic PTT then): does the PTT change the level, the noise, the
+ * DC, or click? */
+static void mic_test(size_t n, const int16_t *x) {
+    static double  sq, sm;
+    static float   pk;
+    static size_t  cnt;
+    static FILE   *f;
+    for (size_t i = 0; i < n; i++) {
+        float v = x[i] / 32768.0f;
+        sq += (double)v * v;
+        sm += v;
+        if (fabsf(v) > pk) pk = fabsf(v);
+    }
+    cnt += n;
+    if (cnt < AUDIO_CAPTURE_RATE / 10) return;
+    float mean = (float)(sm / cnt);
+    float rms  = (float)sqrt(sq / cnt - (double)mean * mean);
+    atomic_store(&mt_rms, rms);
+    atomic_store(&mt_peak, pk);
+    atomic_store(&mt_dc, mean);
+    if (!f) f = fopen("/mnt/mic_ptt.log", "a");
+    if (f) {
+        struct timespec ts;
+        struct tm       tm;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        localtime_r(&ts.tv_sec, &tm);
+        fprintf(f, "%02d:%02d:%02d.%03ld rms=%.5f pico=%.5f dc=%+.5f\n", tm.tm_hour, tm.tm_min, tm.tm_sec,
+                ts.tv_nsec / 1000000, rms, pk, mean);
+        fflush(f);
+    }
+    sq = sm = 0.0;
+    pk = 0.0f;
+    cnt = 0;
+}
+
 static void mic_cb(size_t n, int16_t *samples) {
+    if (!atomic_load(&tx_on) && atomic_load(&listen_variant) == 11) {
+        mic_test(n, samples);
+        return;
+    }
     if (!atomic_load(&tx_on)) {
         /* listening: is the hand mic heard? level for the MIC bar and the
          * log, nothing is sent */

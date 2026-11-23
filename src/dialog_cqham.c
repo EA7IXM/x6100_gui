@@ -725,7 +725,15 @@ static void update_texts(void) {
 
     if (s.ptt && ptt_by_key) lv_obj_clear_flag(lbl_bigtx, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(lbl_bigtx, LV_OBJ_FLAG_HIDDEN);
-    {
+    if (cqham_audio_get_variant() == 11) {
+        /* PRUEBA MIC: the numbers, live */
+        float r, p, dcv;
+        char  h[96];
+        cqham_audio_mic_stats(&r, &p, &dcv);
+        snprintf(h, sizeof(h), "MIC %.4f pico %.3f\nDC %+.4f", r, p, dcv);
+        lv_label_set_text(lbl_hint, h);
+        lv_obj_set_style_text_color(lbl_hint, lv_color_hex(0x5affa0), 0);
+    } else {
         /* the base ignores the hand mic PTT while it plays CQHAM: say so */
         bool        blind = conf.ptt_micro && cqham_audio_mic_ptt_blind();
         const char *h     = blind ? "Para hablar usa la tecla PTT de arriba" : "PTT: micro, tecla PTT o F1";
