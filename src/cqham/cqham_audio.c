@@ -423,7 +423,7 @@ static void apply_mode(base_mode_t m) {
 
 /* AUTO PTT (variant 8): the voice-record flag, see the list above */
 #define PROBE_PERIOD  700
-#define PROBE_MS      110
+#define PROBE_MS       95
 #define TX_TAIL_MS    300
 static int      rec_state = -1;     /* -1 unknown, 0 off, 1 on */
 static int64_t  tx_tail_until;
@@ -442,8 +442,8 @@ static void rec_set(bool on) {
 /* last mixed level and its slow average, for peeking in a pause */
 static float   mix_rms, mix_avg;
 static int64_t probe_until, probe_last;
-#define PROBE_MAX_GAP  1500   /* a peek at least this often over a remote */
-#define PROBE_MIN_GAP   350
+#define PROBE_MAX_GAP   500   /* a peek at least this often over a remote */
+#define PROBE_MIN_GAP   250
 
 static bool auto_ptt_step(bool tx, bool busy) {
     (void)busy;
