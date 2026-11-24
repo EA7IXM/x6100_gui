@@ -1342,60 +1342,67 @@ static buttons_page_t page2 = {{&b_p2, &b_step, &b_pwr, &b_login, &b_rband}};
 static buttons_page_t page5 = {{&b_p5, &b_mic_dn, &b_micv, &b_mic_up, NULL}};
 static buttons_page_t page3 = {{&b_p3, &b_room, &b_remote, &b_probe, &b_go}};
 
-/* Page 6: the 11 m links (rooms A / B), as the web app's buttons. QSY to a
- * typed frequency, RETURN to 27.555, RESET-TIME of the link's 3 minutes.
+/* Page 6: the 11 m links (rooms A / B), as the web app's buttons. QSY with
+ * the dial, RETURN to 27.555, RESET-TIME of the link's 3 minutes.
  * The server decides (only the one who moved the link may RETURN or reset). */
 static button_data_t b_q11, b_ret11, b_rst11;
 
-static bool      q11_kb;          /* the QSY keyboard is open: the knobs drive it */
-static lv_obj_t *q11_prev_focus;
-static bool      q11_prev_edit;
-
-static void q11_kb_end(void) {
-    if (!q11_kb) return;
-    q11_kb = false;
-    if (q11_prev_focus && lv_obj_is_valid(q11_prev_focus)) lv_group_focus_obj(q11_prev_focus);
-    lv_group_set_editing(keyboard_group, q11_prev_edit);
-}
+/* QSY with the radio's dial: QSY on, each step of the dial moves the link
+ * 5 kHz inside 11 m; 0.8 s after the dial stops the request goes (qsy_req).
+ * The server decides: only the one who has the link may move it. */
+#define Q11_STEP   5000
+static bool        q11_dial;
+static int64_t     q11_freq;       /* where the dial has put it, not sent yet; 0 none */
+static lv_timer_t *q11_timer;
 
 static bool in_11m(void) {
     return band() && band()->rooms;
 }
 
-static bool qsy11_ok(void) {
-    int64_t f = 0;
-    const char *v = textarea_window_get();
-    double  x = 0;
-    char    buf[24];
-    snprintf(buf, sizeof(buf), "%s", v ? v : "");
-    for (char *p = buf; *p; p++) if (*p == ',') *p = '.';
-    x = atof(buf);
-    textarea_window_close();
-    q11_kb_end();
-    if (x <= 0) return true;
-    if (x > 100.0) x /= 1000.0;               /* 27455 (kHz) or 27.455 (MHz) */
-    f = (int64_t)llround(x * 1e6);
-    int bi = cqham_band_index_for(f);
-    if (bi < 0 || !cqham_band_at(bi)->rooms) {
-        show_notice("La frecuencia de QSY debe estar dentro de 11 m", true);
-        return true;
-    }
-    cqham_client_qsy11(f);
+static void q11_send_cb(lv_timer_t *t) {
+    (void)t;
+    q11_timer = NULL;
+    if (!q11_freq) return;
+    cqham_client_qsy11(q11_freq);
     char msg[64];
-    snprintf(msg, sizeof(msg), "QSY %c pedido a %.3f...", s.room == 'b' ? 'B' : 'A', x);
+    snprintf(msg, sizeof(msg), "QSY %c pedido a %.3f...", s.room == 'b' ? 'B' : 'A', (double)q11_freq / 1e6);
     show_notice(msg, false);
-    return true;
+    q11_freq = 0;
 }
 
-static bool qsy11_cancel(void) {
-    textarea_window_close();
-    q11_kb_end();
-    return true;
+static void q11_off(void) {
+    if (q11_timer) {
+        lv_timer_del(q11_timer);
+        q11_timer = NULL;
+    }
+    q11_dial = false;
+    q11_freq = 0;
+}
+
+static void q11_dial_step(int32_t diff) {
+    const cqham_band_t *b = band();
+    if (!b || !b->rooms) {
+        q11_off();
+        return;
+    }
+    int64_t base = q11_freq ? q11_freq : s.freq;
+    base = (base + Q11_STEP / 2) / Q11_STEP * Q11_STEP;     /* on the 5 kHz grid */
+    int64_t f = base + (int64_t)diff * Q11_STEP;
+    if (f < b->start) f = (b->start + Q11_STEP - 1) / Q11_STEP * Q11_STEP;
+    if (f > b->end) f = b->end / Q11_STEP * Q11_STEP;
+    q11_freq = f;
+    char msg[64];
+    snprintf(msg, sizeof(msg), "QSY %c -> %.3f (para el dial y se envia)", s.room == 'b' ? 'B' : 'A', (double)f / 1e6);
+    show_notice(msg, false);
+    if (q11_timer) lv_timer_del(q11_timer);
+    q11_timer = lv_timer_create(q11_send_cb, 800, NULL);
+    lv_timer_set_repeat_count(q11_timer, 1);
 }
 
 static const char *q11_label(void) {
     static char b[24];
-    snprintf(b, sizeof(b), in_11m() ? "QSY\n11m %c" : "QSY\n(11m)", s.room == 'b' ? 'B' : 'A');
+    if (q11_dial) snprintf(b, sizeof(b), "QSY DIAL\nON 5k");
+    else snprintf(b, sizeof(b), in_11m() ? "QSY\n11m %c" : "QSY\n(11m)", s.room == 'b' ? 'B' : 'A');
     return b;
 }
 
@@ -1414,27 +1421,20 @@ static const char *rst11_label(void) {
 }
 
 static void btn_q11_cb(button_data_t *d) {
-    (void)d;
     if (!in_11m()) {
         show_notice("QSY de link: ponte en 11m A o 11m B", true);
         return;
     }
-    textarea_window_open_w_label(qsy11_ok, qsy11_cancel, s.room == 'b' ? "QSY 11m B: frecuencia (ej. 27.455)"
-                                                                     : "QSY 11m A: frecuencia (ej. 27.455)");
-    lv_obj_t *text = textarea_window_text();
-    lv_textarea_set_accepted_chars(text, "0123456789.,");
-    lv_textarea_set_max_length(text, 10);
-    char cur[16];
-    snprintf(cur, sizeof(cur), "%.3f", (double)s.freq / 1e6);
-    textarea_window_set(cur);
-    /* numbers, and the knobs on the keyboard (not on CQHAM's dial) */
-    q11_prev_focus = lv_group_get_focused(keyboard_group);
-    q11_prev_edit  = lv_group_get_editing(keyboard_group);
-    q11_kb         = true;
-    lv_obj_t *kb   = textarea_window_keyboard();
-    if (kb) lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_NUMBER);
-    lv_group_focus_obj(kb ? kb : text);
-    lv_group_set_editing(keyboard_group, true);
+    if (q11_dial) {
+        if (q11_freq) q11_send_cb(NULL);     /* what the dial set, now */
+        q11_off();
+        show_notice("QSY con el dial: OFF", false);
+    } else {
+        q11_dial = true;
+        q11_freq = 0;
+        show_notice("QSY con el dial: gira el dial (pasos de 5 kHz)", false);
+    }
+    buttons_refresh(d);
 }
 
 static void btn_ret11_cb(button_data_t *d) {
@@ -1469,6 +1469,10 @@ static void page11_follow(void) {
     static int was_11m = -1;
     static char was_room;
     int now11 = in_11m();
+    if (!now11 && q11_dial) {
+        q11_off();
+        if (b_q11.disp_btn) buttons_refresh(&b_q11);
+    }
     if (now11 && was_11m == 0) buttons_load_page(&page6);
     if (now11 != was_11m || s.room != was_room) {
         if (b_q11.disp_btn) buttons_refresh(&b_q11);
@@ -1864,10 +1868,7 @@ static void construct_cb(lv_obj_t *parent) {
 }
 
 static void destruct_cb(void) {
-    if (q11_kb) {
-        textarea_window_close();
-        q11_kb = false;
-    }
+    q11_off();
     if (timer) {
         lv_timer_del(timer);
         timer = NULL;
@@ -1941,10 +1942,8 @@ static void key_cb(lv_event_t *e) {
 bool dialog_cqham_rotary(int32_t diff, uint16_t dt) {
     (void)dt;
     if (!dialog.run) return false;
-    if (q11_kb) {
-        lv_obj_t *kb = textarea_window_keyboard();
-        uint32_t  k  = diff > 0 ? LV_KEY_RIGHT : LV_KEY_LEFT;
-        if (kb) for (int32_t i = 0; i < (diff > 0 ? diff : -diff) && i < 5; i++) lv_event_send(kb, LV_EVENT_KEY, &k);
+    if (q11_dial) {
+        q11_dial_step(diff);
         return true;
     }
     dial(diff);
