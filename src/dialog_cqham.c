@@ -959,6 +959,8 @@ static void base_ptt_poll(void) {
     }
 }
 
+static void page11_follow(void);
+
 static void timer_cb(lv_timer_t *t) {
     (void)t;
     cqham_client_get(&s);
@@ -967,6 +969,7 @@ static void timer_cb(lv_timer_t *t) {
 
     base_ptt_poll();
     tx_info_cqham_mic(cqham_audio_mic_level(), conf.mic_gain);
+    page11_follow();
     cqham_audio_output_poll(false);
 
     float prev = s_meter;
@@ -1210,17 +1213,17 @@ static void btn_goto_cb(button_data_t *d);
 static const char *net_label(void);
 static const char *goto_label(void);
 
-static buttons_page_t page4, page5;
-static button_data_t b_p1     = {.type = BTN_TEXT, .label = "(CQHAM 1:5)", .press = button_next_page_cb,
-                                 .hold = button_prev_page_cb, .next = &page2, .prev = &page5};
-static button_data_t b_p2     = {.type = BTN_TEXT, .label = "(CQHAM 2:5)", .press = button_next_page_cb,
+static buttons_page_t page4, page5, page6;
+static button_data_t b_p1     = {.type = BTN_TEXT, .label = "(CQHAM 1:6)", .press = button_next_page_cb,
+                                 .hold = button_prev_page_cb, .next = &page2, .prev = &page6};
+static button_data_t b_p2     = {.type = BTN_TEXT, .label = "(CQHAM 2:6)", .press = button_next_page_cb,
                                  .hold = button_prev_page_cb, .next = &page3, .prev = &page1};
-static button_data_t b_p3     = {.type = BTN_TEXT, .label = "(CQHAM 3:5)", .press = button_next_page_cb,
+static button_data_t b_p3     = {.type = BTN_TEXT, .label = "(CQHAM 3:6)", .press = button_next_page_cb,
                                  .hold = button_prev_page_cb, .next = &page4, .prev = &page2};
-static button_data_t b_p4     = {.type = BTN_TEXT, .label = "(CQHAM 4:5)", .press = button_next_page_cb,
+static button_data_t b_p4     = {.type = BTN_TEXT, .label = "(CQHAM 4:6)", .press = button_next_page_cb,
                                  .hold = button_prev_page_cb, .next = &page5, .prev = &page3};
-static button_data_t b_p5     = {.type = BTN_TEXT, .label = "(CQHAM 5:5)", .press = button_next_page_cb,
-                                 .hold = button_prev_page_cb, .next = &page1, .prev = &page4};
+static button_data_t b_p5     = {.type = BTN_TEXT, .label = "(CQHAM 5:6)", .press = button_next_page_cb,
+                                 .hold = button_prev_page_cb, .next = &page6, .prev = &page4};
 static button_data_t b_net    = {.type = BTN_TEXT_FN, .label_fn = net_label, .press = btn_net_cb};
 static button_data_t b_goto   = {.type = BTN_TEXT_FN, .label_fn = goto_label, .press = btn_goto_cb};
 static button_data_t b_ptt    = {.type = BTN_TEXT_FN, .label_fn = ptt_label, .press = btn_ptt_cb};
@@ -1338,6 +1341,122 @@ static button_data_t b_micv   = {.type = BTN_TEXT_FN, .label_fn = mic_label, .pr
 static buttons_page_t page2 = {{&b_p2, &b_step, &b_pwr, &b_login, &b_rband}};
 static buttons_page_t page5 = {{&b_p5, &b_mic_dn, &b_micv, &b_mic_up, NULL}};
 static buttons_page_t page3 = {{&b_p3, &b_room, &b_remote, &b_probe, &b_go}};
+
+/* Page 6: the 11 m links (rooms A / B), as the web app's buttons. QSY to a
+ * typed frequency, RETURN to 27.555, RESET-TIME of the link's 3 minutes.
+ * The server decides (only the one who moved the link may RETURN or reset). */
+static button_data_t b_q11, b_ret11, b_rst11;
+
+static bool in_11m(void) {
+    return band() && band()->rooms;
+}
+
+static bool qsy11_ok(void) {
+    int64_t f = 0;
+    const char *v = textarea_window_get();
+    double  x = 0;
+    char    buf[24];
+    snprintf(buf, sizeof(buf), "%s", v ? v : "");
+    for (char *p = buf; *p; p++) if (*p == ',') *p = '.';
+    x = atof(buf);
+    textarea_window_close();
+    if (x <= 0) return true;
+    if (x > 100.0) x /= 1000.0;               /* 27455 (kHz) or 27.455 (MHz) */
+    f = (int64_t)llround(x * 1e6);
+    int bi = cqham_band_index_for(f);
+    if (bi < 0 || !cqham_band_at(bi)->rooms) {
+        show_notice("La frecuencia de QSY debe estar dentro de 11 m", true);
+        return true;
+    }
+    cqham_client_qsy11(f);
+    char msg[64];
+    snprintf(msg, sizeof(msg), "QSY %c pedido a %.3f...", s.room == 'b' ? 'B' : 'A', x);
+    show_notice(msg, false);
+    return true;
+}
+
+static bool qsy11_cancel(void) {
+    textarea_window_close();
+    return true;
+}
+
+static const char *q11_label(void) {
+    static char b[24];
+    snprintf(b, sizeof(b), in_11m() ? "QSY\n11m %c" : "QSY\n(11m)", s.room == 'b' ? 'B' : 'A');
+    return b;
+}
+
+static const char *ret11_label(void) {
+    static char b[24];
+    snprintf(b, sizeof(b), in_11m() ? "RETURN\n27.555 %c" : "RETURN\n(11m)", s.room == 'b' ? 'B' : 'A');
+    return b;
+}
+
+static const char *rst11_label(void) {
+    static char b[24];
+    int left = cqham_client_qsy_left();
+    if (left > 0) snprintf(b, sizeof(b), "RESET-TIME\n%d:%02d", left / 60, left % 60);
+    else snprintf(b, sizeof(b), "RESET-TIME");
+    return b;
+}
+
+static void btn_q11_cb(button_data_t *d) {
+    (void)d;
+    if (!in_11m()) {
+        show_notice("QSY de link: ponte en 11m A o 11m B", true);
+        return;
+    }
+    textarea_window_open_w_label(qsy11_ok, qsy11_cancel, s.room == 'b' ? "QSY 11m B: frecuencia (ej. 27.455)"
+                                                                     : "QSY 11m A: frecuencia (ej. 27.455)");
+    lv_obj_t *text = textarea_window_text();
+    lv_textarea_set_accepted_chars(text, "0123456789.,");
+    lv_textarea_set_max_length(text, 10);
+    char cur[16];
+    snprintf(cur, sizeof(cur), "%.3f", (double)s.freq / 1e6);
+    textarea_window_set(cur);
+}
+
+static void btn_ret11_cb(button_data_t *d) {
+    (void)d;
+    if (!in_11m()) {
+        show_notice("RETURN: ponte en 11m A o 11m B", true);
+        return;
+    }
+    cqham_client_return11();
+    show_notice(s.room == 'b' ? "RETURN pedido: el link B vuelve a 27.555" : "RETURN pedido: el link A vuelve a 27.555", false);
+}
+
+static void btn_rst11_cb(button_data_t *d) {
+    (void)d;
+    if (!in_11m()) {
+        show_notice("RESET-TIME: ponte en 11m A o 11m B", true);
+        return;
+    }
+    cqham_client_reset_time();
+    show_notice("RESET-TIME pedido: reiniciando el contador del link", false);
+}
+
+static button_data_t b_p6    = {.type = BTN_TEXT, .label = "(CQHAM 6:6)", .press = button_next_page_cb,
+                                .hold = button_prev_page_cb, .next = &page1, .prev = &page5};
+static button_data_t b_q11   = {.type = BTN_TEXT_FN, .label_fn = q11_label, .press = btn_q11_cb};
+static button_data_t b_ret11 = {.type = BTN_TEXT_FN, .label_fn = ret11_label, .press = btn_ret11_cb};
+static button_data_t b_rst11 = {.type = BTN_TEXT_FN, .label_fn = rst11_label, .press = btn_rst11_cb};
+static buttons_page_t page6  = {{&b_p6, &b_q11, &b_ret11, &b_rst11, NULL}};
+
+/* Entering 11 m shows page 6; the labels follow the room and the countdown */
+static void page11_follow(void) {
+    static int was_11m = -1;
+    static char was_room;
+    int now11 = in_11m();
+    if (now11 && was_11m == 0) buttons_load_page(&page6);
+    if (now11 != was_11m || s.room != was_room) {
+        if (b_q11.disp_btn) buttons_refresh(&b_q11);
+        if (b_ret11.disp_btn) buttons_refresh(&b_ret11);
+    }
+    was_11m  = now11;
+    was_room = s.room;
+    if (tick_n % 10 == 0 && b_rst11.disp_btn) buttons_refresh(&b_rst11);
+}
 static const char *audio_label(void) {
     static char b[24];
     snprintf(b, sizeof(b), "AUDIO\n%s", cqham_audio_variant_name(cqham_audio_get_variant()));

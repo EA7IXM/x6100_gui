@@ -105,6 +105,7 @@ void cqham_log(const char *fmt, ...) {
 }
 
 /* With lock held */
+static int64_t qsy_count_until;   /* EA7IXM: the 11 m link's QSY time (qsy_count), 0 none */
 static void notice_l(bool alert, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 static void notice_l(bool alert, const char *fmt, ...) {
     va_list ap;
@@ -788,6 +789,9 @@ static void handle_text(const char *txt) {
             if (r && !strcmp(r, "ctrlpending")) notice_l(false, "Pedido el control a %s", jstr(m, "holder") ? jstr(m, "holder") : "?");
             else if (r && !strcmp(r, "ctrlbusy")) notice_l(true, "Remoto en uso por %s", jstr(m, "holder") ? jstr(m, "holder") : "?");
             else if (r && !strcmp(r, "nolink")) notice_l(true, "No hay remoto en esta frecuencia");
+            else if (r && !strcmp(r, "notband")) notice_l(true, "La frecuencia de QSY debe estar en 11 m");
+            else if (r && !strcmp(r, "busy")) notice_l(true, "El link lo usa %s: solo el puede moverlo hasta que vuelva a 27.555",
+                                                     jstr(m, "by") ? jstr(m, "by") : "otro usuario");
             else if (r && !strcmp(r, "fuerarango")) notice_l(true, "Fuera del rango del remoto");
             else if (r && !strcmp(r, "remlimite")) notice_l(true, "Agotado el tiempo de remoto de hoy");
             else if (r && !strcmp(r, "nolic")) notice_l(true, "Sin licencia: remoto solo en 11m");
@@ -813,10 +817,43 @@ static void handle_text(const char *txt) {
         st.atu = jtrue(m, "on");
         const char *x = jstr(m, "texto");
         if (x) notice_l(false, "%s", x);
+    } else if (!strcmp(t, "return_ack")) {
+        const char *r = jstr(m, "reason");
+        double      f = jnum(m, "freq", 0);
+        cqham_log("11m return_ack ok=%d freq=%.4f reason=%s", jtrue(m, "ok"), f, r ? r : "-");
+        if (jtrue(m, "ok")) {
+            if (f > 0) {
+                st.freq  = (int64_t)llround(f * 1e6);
+                cfg.freq = st.freq;
+                resend_tune = true;
+            }
+            qsy_count_until = 0;
+            notice_l(false, "RETURN: el link y tu volveis a %.3f", f > 0 ? f : 27.555);
+        } else if (r && !strcmp(r, "notyours")) {
+            notice_l(true, "Solo %s puede hacer RETURN (espera 3 min sin hablar)", jstr(m, "by") ? jstr(m, "by") : "quien pidio el QSY");
+        } else if (r && !strcmp(r, "nolink")) {
+            notice_l(true, "No hay ningun QSY activo en esta frecuencia");
+        } else {
+            notice_l(true, "RETURN rechazado (%s)", r ? r : "?");
+        }
+    } else if (!strcmp(t, "reset_time_ack")) {
+        const char *r = jstr(m, "reason");
+        cqham_log("11m reset_time_ack ok=%d reason=%s", jtrue(m, "ok"), r ? r : "-");
+        if (jtrue(m, "ok")) notice_l(false, "RESET-TIME: contador del link a 3 min");
+        else if (r && !strcmp(r, "notyours")) notice_l(true, "El turno del link es de %s: solo el puede reiniciarlo", jstr(m, "by") ? jstr(m, "by") : "otro usuario");
+        else if (r && !strcmp(r, "nolink")) notice_l(true, "No hay ningun link con QSY activo aqui");
+        else notice_l(true, "RESET-TIME rechazado (%s)", r ? r : "?");
+    } else if (!strcmp(t, "qsy_count")) {
+        double ms = jnum(m, "ms", 0);
+        qsy_count_until = ms > 0 ? now_ms() + (int64_t)ms : 0;
+    } else if (!strcmp(t, "qsy_count_end")) {
+        qsy_count_until = 0;
     } else if (!strcmp(t, "link_home")) {
+        qsy_count_until = 0;
         cqham_log("REMOTO link_home freq=%.4f remoto=%d", jnum(m, "freq", 0), st.remote);
         double f = jnum(m, "freq", 0);
-        if (f > 0 && st.remote) {
+        const cqham_band_t *lb = cqham_band_at(cqham_band_index_for(st.freq));
+        if (f > 0 && (st.remote || (lb && lb->rooms && st.link[0]))) {
             st.freq  = (int64_t)llround(f * 1e6);
             cfg.freq = st.freq;
         }
@@ -1241,6 +1278,31 @@ void cqham_client_remote_qsy(int64_t freq) {
         cJSON_AddBoolToObject(o, "ft8", false);
     }
     send_json(o);
+}
+
+void cqham_client_qsy11(int64_t freq) {
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "t", "qsy_req");
+    cJSON_AddNumberToObject(o, "freq", (double)freq / 1e6);
+    send_json(o);
+    cqham_log("11m QSY pedido a %.4f", (double)freq / 1e6);
+}
+
+void cqham_client_return11(void) {
+    send_simple("return_req");
+    cqham_log("11m RETURN pedido");
+}
+
+void cqham_client_reset_time(void) {
+    send_simple("reset_time_req");
+    cqham_log("11m RESET-TIME pedido");
+}
+
+int cqham_client_qsy_left(void) {
+    pthread_mutex_lock(&lock);
+    int64_t left = qsy_count_until ? qsy_count_until - now_ms() : 0;
+    pthread_mutex_unlock(&lock);
+    return left > 0 ? (int)((left + 999) / 1000) : 0;
 }
 
 void cqham_client_ctrl_answer(bool grant) {

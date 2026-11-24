@@ -167,6 +167,11 @@ void cqham_client_remote(bool on);            /* scope_sub + remote-scope mode *
 void cqham_client_remote_probe(void);         /* hf_bands_req */
 void cqham_client_remote_qsy(int64_t freq);   /* hf_qsy_req / qsy_req (11 m) */
 void cqham_client_ctrl_answer(bool grant);    /* answer qsy_ctrl_req */
+/* EA7IXM: the 11 m links (rooms A / B), as the web app's buttons */
+void cqham_client_qsy11(int64_t freq);        /* QSY: qsy_req to a typed frequency */
+void cqham_client_return11(void);             /* RETURN: return_req, the link back to 27.555 */
+void cqham_client_reset_time(void);           /* RESET-TIME: reset_time_req, its 3 min again */
+int  cqham_client_qsy_left(void);             /* seconds left of the link's QSY (qsy_count), 0 none */
 
 /* Cheap reads for the audio threads */
 void cqham_client_tuning(int64_t *freq, cqham_mode_t *mode, int *power);
