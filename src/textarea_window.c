@@ -195,6 +195,10 @@ void textarea_window_close() {
     }
 }
 
+lv_obj_t * textarea_window_keyboard(void) {
+    return keyboard;
+}
+
 const char* textarea_window_get() {
     return lv_textarea_get_text(text);
 }

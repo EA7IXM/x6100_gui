@@ -1347,6 +1347,17 @@ static buttons_page_t page3 = {{&b_p3, &b_room, &b_remote, &b_probe, &b_go}};
  * The server decides (only the one who moved the link may RETURN or reset). */
 static button_data_t b_q11, b_ret11, b_rst11;
 
+static bool      q11_kb;          /* the QSY keyboard is open: the knobs drive it */
+static lv_obj_t *q11_prev_focus;
+static bool      q11_prev_edit;
+
+static void q11_kb_end(void) {
+    if (!q11_kb) return;
+    q11_kb = false;
+    if (q11_prev_focus && lv_obj_is_valid(q11_prev_focus)) lv_group_focus_obj(q11_prev_focus);
+    lv_group_set_editing(keyboard_group, q11_prev_edit);
+}
+
 static bool in_11m(void) {
     return band() && band()->rooms;
 }
@@ -1360,6 +1371,7 @@ static bool qsy11_ok(void) {
     for (char *p = buf; *p; p++) if (*p == ',') *p = '.';
     x = atof(buf);
     textarea_window_close();
+    q11_kb_end();
     if (x <= 0) return true;
     if (x > 100.0) x /= 1000.0;               /* 27455 (kHz) or 27.455 (MHz) */
     f = (int64_t)llround(x * 1e6);
@@ -1377,6 +1389,7 @@ static bool qsy11_ok(void) {
 
 static bool qsy11_cancel(void) {
     textarea_window_close();
+    q11_kb_end();
     return true;
 }
 
@@ -1414,6 +1427,14 @@ static void btn_q11_cb(button_data_t *d) {
     char cur[16];
     snprintf(cur, sizeof(cur), "%.3f", (double)s.freq / 1e6);
     textarea_window_set(cur);
+    /* numbers, and the knobs on the keyboard (not on CQHAM's dial) */
+    q11_prev_focus = lv_group_get_focused(keyboard_group);
+    q11_prev_edit  = lv_group_get_editing(keyboard_group);
+    q11_kb         = true;
+    lv_obj_t *kb   = textarea_window_keyboard();
+    if (kb) lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_NUMBER);
+    lv_group_focus_obj(kb ? kb : text);
+    lv_group_set_editing(keyboard_group, true);
 }
 
 static void btn_ret11_cb(button_data_t *d) {
@@ -1843,6 +1864,10 @@ static void construct_cb(lv_obj_t *parent) {
 }
 
 static void destruct_cb(void) {
+    if (q11_kb) {
+        textarea_window_close();
+        q11_kb = false;
+    }
     if (timer) {
         lv_timer_del(timer);
         timer = NULL;
@@ -1916,6 +1941,12 @@ static void key_cb(lv_event_t *e) {
 bool dialog_cqham_rotary(int32_t diff, uint16_t dt) {
     (void)dt;
     if (!dialog.run) return false;
+    if (q11_kb) {
+        lv_obj_t *kb = textarea_window_keyboard();
+        uint32_t  k  = diff > 0 ? LV_KEY_RIGHT : LV_KEY_LEFT;
+        if (kb) for (int32_t i = 0; i < (diff > 0 ? diff : -diff) && i < 5; i++) lv_event_send(kb, LV_EVENT_KEY, &k);
+        return true;
+    }
     dial(diff);
     return true;
 }
